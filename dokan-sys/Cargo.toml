@@ -1,0 +1,20 @@
+[package]
+name = "dokan-sys"
+version = "1.3.1"
+authors = ["DDoSolitary <DDoSolitary@gmail.com>"]
+description = "Raw FFI bindings for Dokan (user mode file system library for Windows)"
+homepage = "https://dokan-dev.github.io"
+repository = "https://github.com/dokan-dev/dokan-rust"
+keywords = ["ffi", "dokan", "bindings", "driver", "filesystem"]
+categories = ["external-ffi-bindings"]
+license = "LGPL-3.0-only"
+edition = "2018"
+links = "dokan"
+build = "build.rs"
+
+[dependencies]
+libc = "0.2.66"
+winapi = { version = "0.3.8", features = ["basetsd", "fileapi", "minwinbase", "minwindef", "ntdef", "winnt"] }
+
+[build-dependencies]
+cc = "1.0.50"

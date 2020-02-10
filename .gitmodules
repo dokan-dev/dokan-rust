@@ -1,0 +1,3 @@
+[submodule "dokan-sys/src/dokany"]
+	path = dokan-sys/src/dokany
+	url = https://github.com/dokan-dev/dokany
