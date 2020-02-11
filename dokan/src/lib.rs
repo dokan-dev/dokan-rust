@@ -96,8 +96,8 @@ pub fn unmount(mount_point: impl AsRef<U16CStr>) -> bool {
 #[derive(Debug, Clone)]
 pub struct MountPointInfo {
 	pub device_type: u32,
-	pub mount_point: U16CString,
-	pub unc_name: U16CString,
+	pub mount_point: Option<U16CString>,
+	pub unc_name: Option<U16CString>,
 	pub device_name: U16CString,
 	pub session_id: u32,
 }
@@ -124,10 +124,16 @@ pub fn get_mount_point_list(unc_only: bool) -> Option<Vec<MountPointInfo>> {
 			let count = count as usize;
 			let mut list = Vec::with_capacity(count);
 			for control in slice::from_raw_parts(ffi_list.list_ptr, count) {
+				let mount_point = if control.MountPoint[0] == 0 { None } else {
+					Some(U16CStr::from_slice_with_nul(&control.MountPoint).unwrap().to_owned())
+				};
+				let unc_name = if control.UNCName[0] == 0 { None } else {
+					Some(U16CStr::from_slice_with_nul(&control.UNCName).unwrap().to_owned())
+				};
 				list.push(MountPointInfo {
 					device_type: control.Type,
-					mount_point: U16CStr::from_slice_with_nul(&control.MountPoint).unwrap().to_owned(),
-					unc_name: U16CStr::from_slice_with_nul(&control.UNCName).unwrap().to_owned(),
+					mount_point,
+					unc_name,
 					device_name: U16CStr::from_slice_with_nul(&control.DeviceName).unwrap().to_owned(),
 					session_id: control.SessionId,
 				})

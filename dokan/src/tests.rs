@@ -729,8 +729,8 @@ fn test_get_mount_point_list() {
 		assert_eq!(list.len(), 1);
 		let info = &list[0];
 		assert_eq!(info.device_type, FILE_DEVICE_DISK_FILE_SYSTEM);
-		assert_eq!(info.mount_point, convert_str("\\DosDevices\\Z:"));
-		assert_eq!(info.unc_name, convert_str(""));
+		assert_eq!(info.mount_point, Some(convert_str("\\DosDevices\\Z:")));
+		assert_eq!(info.unc_name, None);
 		assert!(
 			Regex::new("^\\\\Device\\\\Volume\\{[0-9a-z]{8}-([0-9a-z]{4}-){3}[0-9a-z]{12}}$").unwrap()
 				.is_match(&info.device_name.to_string_lossy())
