@@ -1,5 +1,17 @@
 #![cfg(windows)]
 
+//! [Dokan][Dokan] is a user mode file system for Windows. It allows anyone to
+//! safely and easily develop new file systems on Windows.
+//!
+//! This crate is a Rust-friendly wrapper for Dokan, allowing you to create file systems using Rust.
+//!
+//! Please note that some of the constants from Win32 API that might be used when interacting with
+//! this crate are not provided directly here. However, you can easily find them in the
+//! [winapi][winapi] crate.
+//!
+//! [Dokan]: https://dokan-dev.github.io/
+//! [winapi]: https://crates.io/crates/winapi
+
 #[macro_use]
 extern crate bitflags;
 extern crate dokan_sys;
@@ -33,15 +45,35 @@ use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::minwinbase::WIN32_FIND_DATAW;
 use winapi::um::winnt::{ACCESS_MASK, PSECURITY_DESCRIPTOR, PSECURITY_INFORMATION};
 
+/// Name of Dokan's kernel driver file.
 pub use dokan_sys::DOKAN_DRIVER_NAME as DRIVER_NAME;
+/// The major version number of Dokan that this wrapper is targeting.
 pub use dokan_sys::DOKAN_MAJOR_API_VERSION as MAJOR_API_VERSION;
+/// Name of Dokan's network provider.
 pub use dokan_sys::DOKAN_NP_NAME as NP_NAME;
+/// The version of Dokan that this wrapper is targeting.
 pub use dokan_sys::DOKAN_VERSION as WRAPPER_VERSION;
 
+/// Gets version of the loaded Dokan library.
+///
+/// The returned value is the version number without dots. For example, it returns `131` if Dokan
+/// v1.3.1 is loaded.
 pub fn lib_version() -> u32 { unsafe { DokanVersion() } }
 
+/// Gets version of the Dokan driver installed on the current system.
+///
+/// The returned value is the version number without dots.
 pub fn driver_version() -> u32 { unsafe { DokanDriverVersion() } }
 
+/// Checks whether the `name` matches the specified `expression`.
+///
+/// This is a helper function that can be used to implement
+/// [`FileSystemHandler::find_files_with_pattern`][find_files_with_pattern]. It behaves like the
+/// [`FsRtlIsNameInExpression`][FsRtlIsNameInExpression] routine provided for file system drivers by
+/// Windows.
+///
+/// [find_files_with_pattern]: trait.FileSystemHandler.html#method.find_files_with_pattern
+/// [FsRtlIsNameInExpression]: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-_fsrtl_advanced_fcb_header-fsrtlisnameinexpression
 pub fn is_name_in_expression(
 	expression: impl AsRef<U16CStr>,
 	name: impl AsRef<U16CStr>,
@@ -56,13 +88,32 @@ pub fn is_name_in_expression(
 	}
 }
 
+/// The flags returned by
+/// [`map_kernel_to_user_create_file_flags`][map_kernel_to_user_create_file_flags].
+///
+/// These flags are the same as those accepted by [CreateFile][CreateFile].
+///
+/// [map_kernel_to_user_create_file_flags]: fn.map_kernel_to_user_create_file_flags.html
+/// [CreateFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct UserCreateFileFlags {
+	/// The requested access to the file.
 	pub desired_access: ACCESS_MASK,
+	/// The file attributes and flags.
 	pub flags_and_attributes: u32,
+	/// The action to take on the file that exists or does not exist.
 	pub creation_disposition: u32,
 }
 
+/// Converts the arguments passed to [`FileSystemHandler::create_file`][create_file] to flags
+/// accepted by the Win32 [CreateFile][CreateFile] function.
+///
+/// Dokan forwards the parameters directly from  [IRP_MJ_CREATE][IRP_MJ_CREATE]. This functions
+/// converts them to corresponding flags in Win32, making it easier to process them.
+///
+/// [create_file]: trait.FileSystemHandler.html#method.create_file
+/// [CreateFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew
+/// [IRP_MJ_CREATE]: https://docs.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-mj-create
 pub fn map_kernel_to_user_create_file_flags(
 	desired_access: ACCESS_MASK,
 	file_attributes: u32,
@@ -88,17 +139,35 @@ pub fn map_kernel_to_user_create_file_flags(
 	result
 }
 
+/// Unmount a Dokan volume from the specified mount point.
+///
+/// Returns `true` on success.
 #[must_use]
 pub fn unmount(mount_point: impl AsRef<U16CStr>) -> bool {
 	unsafe { DokanRemoveMountPoint(mount_point.as_ref().as_ptr()) == TRUE }
 }
 
+/// Mount point information.
 #[derive(Debug, Clone)]
 pub struct MountPointInfo {
+	/// File system type of the mounted volume.
+	///
+	/// Value can be `FILE_DEVICE_DISK_FILE_SYSTEM` or `FILE_DEVICE_NETWORK_FILE_SYSTEM`, which are
+	/// defined in `ntifs.h`.
 	pub device_type: u32,
+
+	/// Mount point path.
 	pub mount_point: Option<U16CString>,
+
+	/// UNC name of the network volume.
 	pub unc_name: Option<U16CString>,
+
+	/// Device name of the mounted volume.
 	pub device_name: U16CString,
+
+	/// The session in which the volume is mounted.
+	///
+	/// It will be `-1` if the volume is mounted globally.
 	pub session_id: u32,
 }
 
@@ -114,6 +183,9 @@ impl Drop for MountPointListWrapper {
 	}
 }
 
+/// Gets a list of active Dokan mount points.
+///
+/// Returns `None` in case of error.
 pub fn get_mount_point_list(unc_only: bool) -> Option<Vec<MountPointInfo>> {
 	unsafe {
 		let mut count: ULONG = 0;
@@ -143,26 +215,44 @@ pub fn get_mount_point_list(unc_only: bool) -> Option<Vec<MountPointInfo>> {
 	}
 }
 
+/// Notifies Dokan that a file or directory has been created.
+///
+/// Returns `true` on success.
 #[must_use]
 pub fn notify_create(path: impl AsRef<U16CStr>, is_dir: bool) -> bool {
 	unsafe { DokanNotifyCreate(path.as_ref().as_ptr(), is_dir.into()) == TRUE }
 }
 
+/// Notifies Dokan that a file or directory has been deleted.
+///
+/// Returns `true` on success.
 #[must_use]
 pub fn notify_delete(path: impl AsRef<U16CStr>, is_dir: bool) -> bool {
 	unsafe { DokanNotifyDelete(path.as_ref().as_ptr(), is_dir.into()) == TRUE }
 }
 
+/// Notifies Dokan that attributes of a file or directory has been changed.
+///
+/// Returns `true` on success.
 #[must_use]
 pub fn notify_update(path: impl AsRef<U16CStr>) -> bool {
 	unsafe { DokanNotifyUpdate(path.as_ref().as_ptr()) == TRUE }
 }
 
+
+/// Notifies Dokan that extended attributes of a file or directory has been changed.
+///
+/// Returns `true` on success.
 #[must_use]
 pub fn notify_xattr_update(path: impl AsRef<U16CStr>) -> bool {
 	unsafe { DokanNotifyXAttrUpdate(path.as_ref().as_ptr()) == TRUE }
 }
 
+/// Notifies Dokan that a file or directory has been renamed.
+///
+/// `is_same_dir` indicates if the new file or directory is in the same directory as the old one.
+///
+/// Returns `true` on success.
 #[must_use]
 pub fn notify_rename(old_path: impl AsRef<U16CStr>, new_path: impl AsRef<U16CStr>, is_dir: bool, is_same_dir: bool) -> bool {
 	unsafe {
@@ -174,28 +264,83 @@ pub fn notify_rename(old_path: impl AsRef<U16CStr>, new_path: impl AsRef<U16CStr
 }
 
 bitflags! {
+	/// Flags that control behavior of the mounted volume.
 	pub struct MountFlags : u32 {
+		/// Enable debug message output.
 		const DEBUG = DOKAN_OPTION_DEBUG;
+
+		/// Write debug messages to stderr.
 		const STDERR = DOKAN_OPTION_STDERR;
+
+		/// Enable support for alternative streams.
+		///
+		/// The driver will fail any attempts to access a path with a colon (`:`).
 		const ALT_STREAM = DOKAN_OPTION_ALT_STREAM;
+
+		/// Make the mounted volume write-protected (i.e. read-only).
 		const WRITE_PROTECT = DOKAN_OPTION_WRITE_PROTECT;
+
+		/// Mount as a network drive.
+		///
+		/// Dokan network provider must be installed for this to work.
 		const NETWORK = DOKAN_OPTION_NETWORK;
+
+		/// Mount as a removable device.
 		const REMOVABLE = DOKAN_OPTION_REMOVABLE;
+
+		/// Use Mount Manager to mount the volume.
 		const MOUNT_MANAGER = DOKAN_OPTION_MOUNT_MANAGER;
+
+		/// Mount the volume on current session only.
 		const CURRENT_SESSION = DOKAN_OPTION_CURRENT_SESSION;
+
+		/// Use [`FileSystemHandler::lock_file`][lock_file] and
+		/// [`FileSystemHandler::unlock_file`][unlock_file] to handle file locking.
+		///
+		/// Dokan will take care of file locking if this flags is not present.
+		///
+		/// [lock_file]: trait.FileSystemHandler.html#method.lock_file
+		/// [unlock_file]: trait.FileSystemHandler.html#method.unlock_file
 		const FILELOCK_USER_MODE = DOKAN_OPTION_FILELOCK_USER_MODE;
+
+		/// Enable notification API support.
+		///
+		/// Notification functions like [`notify_create`][notify_create] require this flag to be
+		/// present, otherwise they will always fail and return `false`.
+		///
+		/// [notify_create]: fn.notify_create.html
 		const ENABLE_NOTIFICATION_API = DOKAN_OPTION_ENABLE_NOTIFICATION_API;
+
+		/// Disable support for opportunistic locks (i.e. oplocks).
+		///
+		/// Regular range locks are always supported regardless of this flag.
 		const DISABLE_OPLOCKS = DOKAN_OPTION_DISABLE_OPLOCKS;
+
+		/// Satisfy single-entry, name-only directory searches directly without dispatching to
+		/// [`FileSystemHandler`][FileSystemHandler] callbacks.
+		///
+		/// Such kind of searches are frequently requested by [`CreateFile`][CreateFile] on Windows
+		/// 7. If the target file is already opened, the driver can just simply the name without
+		/// external information.
+		///
+		/// [FileSystemHandler]: trait.FileSystemHandler.html
+		/// [CreateFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew
 		const OPTIMIZE_SINGLE_NAME_SEARCH = DOKAN_OPTION_OPTIMIZE_SINGLE_NAME_SEARCH;
 	}
 }
 
+/// A simple wrapper struct that holds a Win32 handle.
+///
+/// It calls [`CloseHandle`][CloseHandle] automatically when dropped.
+///
+/// [CloseHandle]: https://docs.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-closehandle
 #[derive(Debug, Eq, PartialEq)]
 pub struct Handle {
 	value: HANDLE,
 }
 
 impl Handle {
+	/// Gets the handle value.
 	pub fn value(&self) -> HANDLE { self.value }
 }
 
@@ -207,6 +352,7 @@ impl Drop for Handle {
 	}
 }
 
+/// Information about the current operation.
 #[derive(Debug)]
 pub struct OperationInfo<'a, T: FileSystemHandler> {
 	file_info: PDOKAN_FILE_INFO,
@@ -237,28 +383,45 @@ impl<'a, T: FileSystemHandler> OperationInfo<'a, T> {
 		unsafe { &*(self.file_info().Context as *const T::Context) }
 	}
 
+	/// Gets process ID of the calling process.
 	pub fn pid(&self) -> u32 { self.file_info().ProcessId }
 
+	/// Gets whether the target file is a directory.
 	pub fn is_dir(&self) -> bool { self.file_info().IsDirectory != 0 }
 
+	/// Informs Dokan that the target file is a directory.
+	///
+	/// It should only be called by [`FileSystemHandle::create_file`][create_file] when a
+	/// directory is being opened.
+	///
+	/// [create_file]: trait.FileSystemHandler.html#method.create_file
 	pub fn set_is_dir(&mut self) {
 		unsafe { (&mut *self.file_info).IsDirectory = 1 }
 	}
 
+	/// Gets whether the file should be deleted when it is closed.
 	pub fn delete_on_close(&self) -> bool { self.file_info().DeleteOnClose != 0 }
 
+	/// Gets whether it is a paging I/O operation.
 	pub fn paging_io(&self) -> bool { self.file_info().PagingIo != 0 }
 
+	/// Gets whether it is a synchronous I/O operation.
 	pub fn synchronous_io(&self) -> bool { self.file_info().SynchronousIo != 0 }
 
+	/// Gets whether it is a non-cached I/O operation.
 	pub fn no_cache(&self) -> bool { self.file_info().Nocache != 0 }
 
+	/// Gets whether the current write operation should write to end of file instead of the
+	/// position specified by the offset argument.
 	pub fn write_to_eof(&self) -> bool { self.file_info().WriteToEndOfFile != 0 }
 
+	/// Gets the number of threads used to handle file system operations.
 	pub fn thread_count(&self) -> u16 { self.mount_options().ThreadCount }
 
+	/// Gets flags that controls behavior of the mounted volume.
 	pub fn mount_flags(&self) -> MountFlags { MountFlags::from_bits_truncate(self.mount_options().Options) }
 
+	/// Gets mount point path.
 	pub fn mount_point(&self) -> Option<&U16CStr> {
 		let ptr = self.mount_options().MountPoint;
 		if ptr.is_null() {
@@ -268,6 +431,7 @@ impl<'a, T: FileSystemHandler> OperationInfo<'a, T> {
 		}
 	}
 
+	/// Gets UNC name of the network drive.
 	pub fn unc_name(&self) -> Option<&U16CStr> {
 		let ptr = self.mount_options().UNCName;
 		if ptr.is_null() {
@@ -277,17 +441,30 @@ impl<'a, T: FileSystemHandler> OperationInfo<'a, T> {
 		}
 	}
 
+	/// Gets the time that Dokan will wait for an operation to complete.
+	///
+	/// See [`Drive::timeout`][timeout] for more information.
+	///
+	/// [timeout]: struct.Drive.html#method.timeout
 	pub fn timeout(&self) -> Duration { Duration::from_millis(self.mount_options().Timeout.into()) }
 
+	/// Gets allocation unit size of the volume.
 	pub fn allocation_unit_size(&self) -> u32 { self.mount_options().AllocationUnitSize }
 
+	/// Gets sector size of the volume.
 	pub fn sector_size(&self) -> u32 { self.mount_options().SectorSize }
 
+	/// Temporarily extend the timeout of the current operation.
+	///
+	/// Returns `true` on success.
 	#[must_use]
 	pub fn reset_timeout(&self, timeout: Duration) -> bool {
 		unsafe { DokanResetTimeout(timeout.as_millis() as u32, self.file_info) == TRUE }
 	}
 
+	/// Gets the access token associated with the calling process.
+	///
+	/// Returns `None` on error.
 	pub fn requester_token(&self) -> Option<Handle> {
 		let value = unsafe { DokanOpenRequestorToken(self.file_info) };
 		if value == INVALID_HANDLE_VALUE {
@@ -298,6 +475,13 @@ impl<'a, T: FileSystemHandler> OperationInfo<'a, T> {
 	}
 }
 
+/// The error type for callbacks of [`FileSystemHandler`][FileSystemHandler].
+///
+/// This enum represents either an NTSTATUS code or a Win32 error code. Dokan only accepts NTSTATUS
+/// codes, so if a Win32 error code is present, it will be automatically converted to the
+/// corresponding NTSTATUS value.
+///
+/// [FileSystemHandler]: trait.FileSystemHandler.html
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum OperationError {
 	NtStatus(NTSTATUS),
@@ -364,14 +548,36 @@ impl FileTimeExt for SystemTime {
 	}
 }
 
+/// The file information returned by
+/// [`FileSystemHandler::get_file_information`][get_file_information].
+///
+/// [get_file_information]: trait.FileSystemHandler.html#method.get_file_information
 #[derive(Debug, Clone)]
 pub struct FileInfo {
+	/// Attribute flags of the files.
+	///
+	/// It can be combination of one or more [file attribute constants][constants] defined by
+	/// Windows.
+	///
+	/// [constants]: https://docs.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
 	attributes: u32,
+
+	/// The time when the file was created.
 	creation_time: SystemTime,
+
+	/// The time when the file was last accessed.
 	last_access_time: SystemTime,
+
+	/// The time when the file was last written to.
 	last_write_time: SystemTime,
+
+	/// Size of the file.
 	file_size: u64,
+
+	/// Number of hardlinks to the file.
 	number_of_links: u32,
+
+	/// The index that uniquely identifies the file in a volume.
 	file_index: u64,
 }
 
@@ -396,13 +602,34 @@ trait ToRawStruct<T> {
 	fn to_raw_struct(&self) -> Option<T>;
 }
 
+/// File information provided by [`FileSystemHandler::find_files`][find_files] or
+/// [`FileSystemHandler::find_files_with_pattern`][find_files_with_pattern].
+///
+/// [find_files]: trait.FileSystemHandler.html#method.find_files
+/// [find_files_with_pattern]: trait.FileSystemHandler.html#method.find_files_with_pattern
 #[derive(Debug, Clone)]
 pub struct FindData {
+	/// Attribute flags of the files.
+	///
+	/// It can be combination of one or more [file attribute constants][constants] defined by
+	/// Windows.
+	///
+	/// [constants]: https://docs.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
 	attributes: u32,
+
+	/// The time when the file was created.
 	creation_time: SystemTime,
+
+	/// The time when the file was last accessed.
 	last_access_time: SystemTime,
+
+	/// The time when the file was last written to.
 	last_write_time: SystemTime,
+
+	/// Size of the file.
 	file_size: u64,
+
+	/// Name of the file.
 	file_name: U16CString,
 }
 
@@ -430,9 +657,20 @@ impl ToRawStruct<WIN32_FIND_DATAW> for FindData {
 	}
 }
 
+/// Alternative stream information provided by [`FileSystemHandler::find_streams`][find_streams].
+///
+/// [find_streams]: trait.FileSystemHandler.html#method.find_streams
 #[derive(Debug, Clone)]
 pub struct FindStreamData {
+	/// Size of the stream.
 	pub size: i64,
+
+	/// Name of stream.
+	///
+	/// The format of this name should be `:streamname:$streamtype`. See [NTFS Streams][streams] for
+	/// more information.
+	///
+	/// [streams]: https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/c54dec26-1551-4d3a-a0ea-4fa40f848eb3
 	pub name: U16CString,
 }
 
@@ -452,9 +690,13 @@ impl ToRawStruct<WIN32_FIND_STREAM_DATA> for FindStreamData {
 	}
 }
 
+/// The error type for the fill-data callbacks.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum FillDataError {
+	/// File name exceeds the limit of `MAX_PATH`.
 	NameTooLong,
+
+	/// Buffer is full.
 	BufferFull,
 }
 
@@ -476,6 +718,10 @@ impl From<FillDataError> for OperationError {
 	}
 }
 
+/// Disk space information returned by
+/// [`FileSystemHandler::get_disk_free_space`][get_disk_free_space].
+///
+/// [get_disk_free_space]: trait.FileSystemHandler.html#method.get_disk_free_space
 #[derive(Debug, Clone)]
 pub struct DiskSpaceInfo {
 	pub byte_count: u64,
@@ -483,16 +729,43 @@ pub struct DiskSpaceInfo {
 	pub available_byte_count: u64,
 }
 
+/// Volume information returned by
+/// [`FileSystemHandler::get_volume_information`][get_volume_information].
+///
+/// [get_volume_information]: trait.FileSystemHandler.html#method.get_volume_information
 #[derive(Debug, Clone)]
 pub struct VolumeInfo {
+	/// Name of the volume.
 	pub name: U16CString,
+
+	/// Serial number of the volume.
 	pub serial_number: u32,
+
+	/// The maximum length of a path component that is supported.
 	pub max_component_length: u32,
+
+	/// The flags associated with the file system.
+	///
+	/// It can be combination of one or more [flags defined by Windows][flags].
+	///
+	/// `FILE_READ_ONLY_VOLUME` is automatically added if
+	/// [`MountFlags::WRITE_PROTECT`][WRITE_PROTECT] was specified when the volume was mounted.
+	///
+	/// [WRITE_PROTECT]: struct.MountFlags.html#associatedconstant.WRITE_PROTECT
 	pub fs_flags: u32,
+
+	/// Name of the file system.
+	///
+	/// Windows checks feature availability based on file system name, so it is recommended to set
+	/// it to well-known names like NTFS or FAT.
+	///
+	/// [flags]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumeinformationa
 	pub fs_name: U16CString,
 }
 
+/// Types that implements this trait can handle file system operations for a mounted volume.
 pub trait FileSystemHandler: Sync + Sized {
+	/// Type of the context associated with an open file handle.
 	type Context: Sync;
 
 	fn create_file(
@@ -1152,15 +1425,34 @@ extern "stdcall" fn find_streams<T: FileSystemHandler>(
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
+/// The error type for [`Drive::mount`][mount].
+///
+/// [mount]: struct.Drive.html#method.mount
 #[repr(i32)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum MountError {
+	/// A general error.
 	Error = DOKAN_ERROR,
+
+	/// Bad drive letter.
 	DriveLetterError = DOKAN_DRIVE_LETTER_ERROR,
+
+	/// Can't install the Dokan driver.
 	DriverInstallError = DOKAN_DRIVER_INSTALL_ERROR,
+
+	/// The driver responds that something is wrong.
 	StartError = DOKAN_START_ERROR,
+
+	/// Can't assign a drive letter or mount point.
+	///
+	/// This probably means that the mount point is already used by another volume.
 	MountError = DOKAN_MOUNT_ERROR,
+
+	/// The mount point is invalid.
 	MountPointError = DOKAN_MOUNT_POINT_ERROR,
+
+	/// The Dokan version that this wrapper is targeting is incompatible with the loaded Dokan
+	/// library.
 	VersionError = DOKAN_VERSION_ERROR,
 }
 
@@ -1172,15 +1464,16 @@ impl Display for MountError {
 			MountError::Error => "Dokan mount error.",
 			MountError::DriveLetterError => "Bad drive letter.",
 			MountError::DriverInstallError => "Can't install driver.",
-			MountError::StartError => "Driver answer that something is wrong.",
+			MountError::StartError => "The driver responds that something is wrong.",
 			MountError::MountError => "Can't assign a drive letter or mount point. Probably already used by another volume.",
-			MountError::MountPointError => "Mount point is invalid.",
+			MountError::MountPointError => "The mount point is invalid.",
 			MountError::VersionError => "Requested an incompatible version.",
 		};
 		write!(f, "{}", msg)
 	}
 }
 
+/// A builder that allows configuring and mounting a volume.
 #[derive(Debug)]
 pub struct Drive<'a> {
 	options: DOKAN_OPTIONS,
@@ -1188,6 +1481,7 @@ pub struct Drive<'a> {
 }
 
 impl<'a> Drive<'a> {
+	/// Creates a new instance of this builder with default settings.
 	pub fn new() -> Self {
 		Drive {
 			options: DOKAN_OPTIONS {
@@ -1205,41 +1499,62 @@ impl<'a> Drive<'a> {
 		}
 	}
 
+	/// Sets the number of threads used to handle file system operations.
 	pub fn thread_count(&mut self, value: u16) -> &mut Self {
 		self.options.ThreadCount = value;
 		self
 	}
 
+	/// Sets flags that controls behavior of the volume.
 	pub fn flags(&mut self, value: MountFlags) -> &mut Self {
 		self.options.Options = value.bits();
 		self
 	}
 
+	/// Sets mount point path.
 	pub fn mount_point(&mut self, value: &'a impl AsRef<U16CStr>) -> &mut Self {
 		self.options.MountPoint = value.as_ref().as_ptr();
 		self
 	}
 
+	/// Sets UNC name of the network drive.
 	pub fn unc_name(&mut self, value: &'a impl AsRef<U16CStr>) -> &mut Self {
 		self.options.UNCName = value.as_ref().as_ptr();
 		self
 	}
 
+	/// Sets the time that Dokan will wait for an operation to complete.
+	///
+	/// If an operation times out, the user mode implementation is considered to be unable to handle
+	/// file system operations properly, and the driver will therefore unmount the volume in order
+	/// to keep the system stable.
+	///
+	/// This timeout can be temporarily extended for an operation with
+	/// [`OperationInfo::reset_timeout`][reset_timeout].
+	///
+	/// [reset_timeout]: struct.OperationInfo.html#method.reset_timeout
 	pub fn timeout(&mut self, value: Duration) -> &mut Self {
 		self.options.Timeout = value.as_millis() as u32;
 		self
 	}
 
+	/// Sets allocation unit size of the volume.
+	///
+	/// This value will affect file sizes.
 	pub fn allocation_unit_size(&mut self, value: u32) -> &mut Self {
 		self.options.AllocationUnitSize = value;
 		self
 	}
 
+	/// Sets sector size of the volume.
+	///
+	/// This value will affect file sizes.
 	pub fn sector_size(&mut self, value: u32) -> &mut Self {
 		self.options.SectorSize = value;
 		self
 	}
 
+	/// Mounts the volume and blocks the current thread until the volume gets unmounted.
 	pub fn mount<T: FileSystemHandler>(&mut self, handler: &T) -> Result<(), MountError> {
 		let mut operations = DOKAN_OPERATIONS {
 			ZwCreateFile: Some(create_file::<T>),
