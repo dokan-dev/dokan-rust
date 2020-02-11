@@ -23,7 +23,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{ptr, mem, panic, slice};
 
 use dokan_sys::{*, win32::*};
-use widestring::{MissingNulError, U16CStr, U16CString};
+use widestring::{U16CStr, U16CString};
 use winapi::ctypes::c_int;
 use winapi::shared::minwindef::{BOOL, DWORD, FILETIME, LPCVOID, LPVOID, LPDWORD, MAX_PATH, PULONG, TRUE, ULONG};
 use winapi::shared::ntdef::{HANDLE, NTSTATUS, LONGLONG, LPCWSTR, LPWSTR, PULONGLONG};
@@ -114,24 +114,26 @@ impl Drop for MountPointListWrapper {
 	}
 }
 
-pub fn get_mount_point_list(unc_only: bool) -> Result<Vec<MountPointInfo>, MissingNulError<u16>> {
+pub fn get_mount_point_list(unc_only: bool) -> Option<Vec<MountPointInfo>> {
 	unsafe {
 		let mut count: ULONG = 0;
 		let ffi_list = MountPointListWrapper {
 			list_ptr: DokanGetMountPointList(unc_only.into(), &mut count)
 		};
-		let count = count as usize;
-		let mut list = Vec::with_capacity(count);
-		for control in slice::from_raw_parts(ffi_list.list_ptr, count) {
-			list.push(MountPointInfo {
-				device_type: control.Type,
-				mount_point: U16CStr::from_slice_with_nul(&control.MountPoint)?.to_owned(),
-				unc_name: U16CStr::from_slice_with_nul(&control.UNCName)?.to_owned(),
-				device_name: U16CStr::from_slice_with_nul(&control.DeviceName)?.to_owned(),
-				session_id: control.SessionId,
-			})
+		if ffi_list.list_ptr.is_null() { None } else {
+			let count = count as usize;
+			let mut list = Vec::with_capacity(count);
+			for control in slice::from_raw_parts(ffi_list.list_ptr, count) {
+				list.push(MountPointInfo {
+					device_type: control.Type,
+					mount_point: U16CStr::from_slice_with_nul(&control.MountPoint).unwrap().to_owned(),
+					unc_name: U16CStr::from_slice_with_nul(&control.UNCName).unwrap().to_owned(),
+					device_name: U16CStr::from_slice_with_nul(&control.DeviceName).unwrap().to_owned(),
+					session_id: control.SessionId,
+				})
+			}
+			Some(list)
 		}
-		Ok(list)
 	}
 }
 
