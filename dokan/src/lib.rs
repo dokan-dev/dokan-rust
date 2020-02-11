@@ -241,8 +241,8 @@ impl<'a, T: FileSystemHandler> OperationInfo<'a, T> {
 
 	pub fn is_dir(&self) -> bool { self.file_info().IsDirectory != 0 }
 
-	pub fn set_is_dir(&mut self, value: bool) {
-		unsafe { (&mut *self.file_info).IsDirectory = value.into() }
+	pub fn set_is_dir(&mut self) {
+		unsafe { (&mut *self.file_info).IsDirectory = 1 }
 	}
 
 	pub fn delete_on_close(&self) -> bool { self.file_info().DeleteOnClose != 0 }
