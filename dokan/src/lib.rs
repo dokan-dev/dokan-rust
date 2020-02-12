@@ -560,25 +560,25 @@ pub struct FileInfo {
 	/// Windows.
 	///
 	/// [constants]: https://docs.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
-	attributes: u32,
+	pub attributes: u32,
 
 	/// The time when the file was created.
-	creation_time: SystemTime,
+	pub creation_time: SystemTime,
 
 	/// The time when the file was last accessed.
-	last_access_time: SystemTime,
+	pub last_access_time: SystemTime,
 
 	/// The time when the file was last written to.
-	last_write_time: SystemTime,
+	pub last_write_time: SystemTime,
 
 	/// Size of the file.
-	file_size: u64,
+	pub file_size: u64,
 
 	/// Number of hardlinks to the file.
-	number_of_links: u32,
+	pub number_of_links: u32,
 
 	/// The index that uniquely identifies the file in a volume.
-	file_index: u64,
+	pub file_index: u64,
 }
 
 impl FileInfo {
@@ -615,22 +615,22 @@ pub struct FindData {
 	/// Windows.
 	///
 	/// [constants]: https://docs.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
-	attributes: u32,
+	pub attributes: u32,
 
 	/// The time when the file was created.
-	creation_time: SystemTime,
+	pub creation_time: SystemTime,
 
 	/// The time when the file was last accessed.
-	last_access_time: SystemTime,
+	pub last_access_time: SystemTime,
 
 	/// The time when the file was last written to.
-	last_write_time: SystemTime,
+	pub last_write_time: SystemTime,
 
 	/// Size of the file.
-	file_size: u64,
+	pub file_size: u64,
 
 	/// Name of the file.
-	file_name: U16CString,
+	pub file_name: U16CString,
 }
 
 impl ToRawStruct<WIN32_FIND_DATAW> for FindData {
