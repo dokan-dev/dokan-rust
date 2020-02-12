@@ -219,24 +219,39 @@ impl FileSystemHandler for TestHandler {
 		create_disposition: u32,
 		create_options: u32,
 		info: &mut OperationInfo<Self>,
-	) -> Result<Self::Context, OperationError> {
+	) -> Result<CreateFileInfo<Self::Context>, OperationError> {
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
-			"\\test_file_io" | "\\test_get_file_information" | "\\test_set_file_attributes" | "\\test_set_file_time" | "\\test_delete_file" | "\\test_move_file" | "\\test_set_end_of_file" | "\\test_set_allocation_size" | "\\test_lock_unlock_file" | "\\test_get_file_security" | "\\test_set_file_security" | "\\test_find_streams" => Ok(None),
+			"\\test_file_io" | "\\test_get_file_information" | "\\test_set_file_attributes" | "\\test_set_file_time" | "\\test_delete_file" | "\\test_move_file" | "\\test_set_end_of_file" | "\\test_set_allocation_size" | "\\test_lock_unlock_file" | "\\test_get_file_security" | "\\test_set_file_security" | "\\test_find_streams" => Ok(CreateFileInfo {
+				context: None,
+				is_dir: true,
+				new_file_created: false,
+			}),
 			"\\" | "\\test_delete_directory" | "\\test_find_files" | "\\test_find_files_with_pattern" => {
-				info.set_is_dir();
-				Ok(None)
+				Ok(CreateFileInfo {
+					context: None,
+					is_dir: true,
+					new_file_created: false,
+				})
 			}
 			"\\test_open_requester_token" => {
 				let token = info.requester_token().unwrap();
 				self.tx.send(HandlerSignal::OpenRequesterToken(get_user_info(token.value()))).unwrap();
-				Ok(None)
+				Ok(CreateFileInfo {
+					context: None,
+					is_dir: false,
+					new_file_created: false,
+				})
 			}
 			"\\test_reset_timeout" => {
 				thread::sleep(Duration::from_secs(14));
 				assert!(info.reset_timeout(Duration::from_secs(10)));
 				thread::sleep(Duration::from_secs(7));
-				Ok(None)
+				Ok(CreateFileInfo {
+					context: None,
+					is_dir: false,
+					new_file_created: false,
+				})
 			}
 			"\\test_operation_info" => {
 				self.tx.send(HandlerSignal::OperationInfo(OperationInfoDump {
@@ -255,7 +270,11 @@ impl FileSystemHandler for TestHandler {
 					allocation_unit_size: info.allocation_unit_size(),
 					sector_size: info.sector_size(),
 				})).unwrap();
-				Ok(None)
+				Ok(CreateFileInfo {
+					context: None,
+					is_dir: false,
+					new_file_created: false,
+				})
 			}
 			"\\test_create_file" => {
 				self.tx.send(HandlerSignal::CreateFile(
@@ -265,10 +284,18 @@ impl FileSystemHandler for TestHandler {
 					create_disposition,
 					create_options,
 				)).unwrap();
-				Ok(None)
+				Ok(CreateFileInfo {
+					context: None,
+					is_dir: false,
+					new_file_created: false,
+				})
 			}
 			"\\test_panic" => panic!(),
-			"\\test_close_file" => Ok(Some(TestContext { tx: self.tx.clone() })),
+			"\\test_close_file" => Ok(CreateFileInfo {
+				context: Some(TestContext { tx: self.tx.clone() }),
+				is_dir: false,
+				new_file_created: false,
+			}),
 			_ => Err(OperationError::NtStatus(STATUS_ACCESS_DENIED)),
 		}
 	}

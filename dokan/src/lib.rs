@@ -39,7 +39,7 @@ use widestring::{U16CStr, U16CString};
 use winapi::ctypes::c_int;
 use winapi::shared::minwindef::{BOOL, DWORD, FILETIME, LPCVOID, LPVOID, LPDWORD, MAX_PATH, PULONG, TRUE, ULONG};
 use winapi::shared::ntdef::{HANDLE, NTSTATUS, LONGLONG, LPCWSTR, LPWSTR, PULONGLONG};
-use winapi::shared::ntstatus::{STATUS_BUFFER_OVERFLOW, STATUS_INTERNAL_ERROR, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS};
+use winapi::shared::ntstatus::{STATUS_BUFFER_OVERFLOW, STATUS_INTERNAL_ERROR, STATUS_NOT_IMPLEMENTED, STATUS_OBJECT_NAME_COLLISION, STATUS_SUCCESS};
 use winapi::um::fileapi::{BY_HANDLE_FILE_INFORMATION, LPBY_HANDLE_FILE_INFORMATION};
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::minwinbase::WIN32_FIND_DATAW;
@@ -388,16 +388,6 @@ impl<'a, T: FileSystemHandler> OperationInfo<'a, T> {
 
 	/// Gets whether the target file is a directory.
 	pub fn is_dir(&self) -> bool { self.file_info().IsDirectory != 0 }
-
-	/// Informs Dokan that the target file is a directory.
-	///
-	/// It should only be called by [`FileSystemHandle::create_file`][create_file] when a
-	/// directory is being opened.
-	///
-	/// [create_file]: trait.FileSystemHandler.html#method.create_file
-	pub fn set_is_dir(&mut self) {
-		unsafe { (&mut *self.file_info).IsDirectory = 1 }
-	}
 
 	/// Gets whether the file should be deleted when it is closed.
 	pub fn delete_on_close(&self) -> bool { self.file_info().DeleteOnClose != 0 }
@@ -763,6 +753,12 @@ pub struct VolumeInfo {
 	pub fs_name: U16CString,
 }
 
+pub struct CreateFileInfo<T: Sync> {
+	pub context: T,
+	pub is_dir: bool,
+	pub new_file_created: bool,
+}
+
 /// Types that implements this trait can handle file system operations for a mounted volume.
 pub trait FileSystemHandler: Sync + Sized {
 	/// Type of the context associated with an open file handle.
@@ -778,7 +774,7 @@ pub trait FileSystemHandler: Sync + Sized {
 		_create_disposition: u32,
 		_create_options: u32,
 		_info: &mut OperationInfo<Self>,
-	) -> Result<Self::Context, OperationError> {
+	) -> Result<CreateFileInfo<Self::Context>, OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
@@ -1028,6 +1024,9 @@ fn fill_data_wrapper<T, U: ToRawStruct<T>>(
 	}
 }
 
+const FILE_OPEN_IF: u32 = 3;
+const FILE_OVERWRITE_IF: u32 = 5;
+
 extern "stdcall" fn create_file<T: FileSystemHandler>(
 	file_name: LPCWSTR,
 	security_context: PDOKAN_IO_SECURITY_CONTEXT,
@@ -1050,9 +1049,14 @@ extern "stdcall" fn create_file<T: FileSystemHandler>(
 			create_disposition,
 			create_options,
 			&mut info,
-		).and_then(|ctx| {
-			(&mut *dokan_file_info).Context = Box::into_raw(Box::new(ctx)) as u64;
-			Ok(())
+		).and_then(|create_info| {
+			(&mut *dokan_file_info).Context = Box::into_raw(Box::new(create_info.context)) as u64;
+			(&mut *dokan_file_info).IsDirectory = create_info.is_dir.into();
+			if (create_disposition == FILE_OPEN_IF || create_disposition == FILE_OVERWRITE_IF) && !create_info.new_file_created {
+				Err(OperationError::NtStatus(STATUS_OBJECT_NAME_COLLISION))
+			} else {
+				Ok(())
+			}
 		}).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
