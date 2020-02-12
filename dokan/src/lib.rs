@@ -1024,6 +1024,7 @@ fn fill_data_wrapper<T, U: ToRawStruct<T>>(
 	}
 }
 
+const FILE_SUPERSEDE: u32 = 0;
 const FILE_OPEN_IF: u32 = 3;
 const FILE_OVERWRITE_IF: u32 = 5;
 
@@ -1052,7 +1053,10 @@ extern "stdcall" fn create_file<T: FileSystemHandler>(
 		).and_then(|create_info| {
 			(&mut *dokan_file_info).Context = Box::into_raw(Box::new(create_info.context)) as u64;
 			(&mut *dokan_file_info).IsDirectory = create_info.is_dir.into();
-			if (create_disposition == FILE_OPEN_IF || create_disposition == FILE_OVERWRITE_IF) && !create_info.new_file_created {
+			if (create_disposition == FILE_OPEN_IF ||
+				create_disposition == FILE_OVERWRITE_IF ||
+				create_disposition == FILE_SUPERSEDE) &&
+				!create_info.new_file_created {
 				Err(OperationError::NtStatus(STATUS_OBJECT_NAME_COLLISION))
 			} else {
 				Ok(())
