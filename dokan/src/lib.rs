@@ -5,11 +5,16 @@
 //!
 //! This crate is a Rust-friendly wrapper for Dokan, allowing you to create file systems using Rust.
 //!
+//! In general, to create a file system with this library, you need to implement the
+//! [`FileSystemHandler`][FileSystemHandler] trait, and pass it to [`Drive::mount`][mount].
+//!
 //! Please note that some of the constants from Win32 API that might be used when interacting with
 //! this crate are not provided directly here. However, you can easily find them in the
 //! [winapi][winapi] crate.
 //!
 //! [Dokan]: https://dokan-dev.github.io/
+//! [FileSystemHandler]: trait.FileSystemHandler.html
+//! [mount]: struct.Drive.html#method.mount
 //! [winapi]: https://crates.io/crates/winapi
 
 #[macro_use]
@@ -471,6 +476,11 @@ impl<'a, T: FileSystemHandler> OperationInfo<'a, T> {
 /// codes, so if a Win32 error code is present, it will be automatically converted to the
 /// corresponding NTSTATUS value.
 ///
+/// Note that although `STATUS_SUCCESS` and `ERROR_SUCCESS` are used to indicate successes in the
+/// Windows world, they are not expected to appear in this enum and will be converted to
+/// `STATUS_INTERNAL_ERROR` if detected. This error type is always used along with `Result`s in this
+/// crate and `Ok` should be returned to indicate successes instead.
+///
 /// [FileSystemHandler]: trait.FileSystemHandler.html
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum OperationError {
@@ -714,8 +724,13 @@ impl From<FillDataError> for OperationError {
 /// [get_disk_free_space]: trait.FileSystemHandler.html#method.get_disk_free_space
 #[derive(Debug, Clone)]
 pub struct DiskSpaceInfo {
+	/// Total number of bytes that are available to the calling user.
 	pub byte_count: u64,
+
+	/// Total number of free bytes on the disk.
 	pub free_byte_count: u64,
+
+	/// Total number of free bytes that are available to the calling user.
 	pub available_byte_count: u64,
 }
 
@@ -739,8 +754,9 @@ pub struct VolumeInfo {
 	/// It can be combination of one or more [flags defined by Windows][flags].
 	///
 	/// `FILE_READ_ONLY_VOLUME` is automatically added if
-	/// [`MountFlags::WRITE_PROTECT`][WRITE_PROTECT] was specified when the volume was mounted.
+	/// [`MountFlags::WRITE_PROTECT`][WRITE_PROTECT] was specified when mounting the volume.
 	///
+	/// [flags]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumeinformationw#parameters
 	/// [WRITE_PROTECT]: struct.MountFlags.html#associatedconstant.WRITE_PROTECT
 	pub fs_flags: u32,
 
@@ -753,17 +769,50 @@ pub struct VolumeInfo {
 	pub fs_name: U16CString,
 }
 
+/// Information about the opened file returned by [`FileSystemHandler::create_file`][create_file].
+///
+/// [create_file]: trait.FileSystemHandler.html#method.create_file
 pub struct CreateFileInfo<T: Sync> {
+	/// The context to be associated with the new file object.
 	pub context: T,
+
+	/// Indicates whether the file is a directory.
 	pub is_dir: bool,
+
+	/// Indicates whether a new file
 	pub new_file_created: bool,
 }
 
 /// Types that implements this trait can handle file system operations for a mounted volume.
+///
+/// Dokan invokes the callback functions in this trait to handle file system operations. These
+/// functions has similar semantics to that of corresponding Windows API functions.
+///
+/// Implementation of most callback functions can be omitted by returning `STATUS_NOT_IMPLEMENTED`
+/// if the corresponding feature is not supported. To make things flexible, all of the functions are
+/// provided with a default implementation which is a no-op and returns `STATUS_NOT_IMPLEMENTED`
+/// (except [`cleanup`][cleanup] and [`close_file`][close_file] which don't have return values).
+/// However, omitting the implementation of some important callbacks such as
+/// [`create_file`][create_file] will make the file system unusable.
+///
+/// [cleanup]: trait.FileSystemHandler.html#method.cleanup
+/// [close_file]: trait.FileSystemHandler.html#method.close_file
+/// [create_file]: trait.FileSystemHandler.html#method.create_file
 pub trait FileSystemHandler: Sync + Sized {
-	/// Type of the context associated with an open file handle.
+	/// Type of the context associated with an open file object.
 	type Context: Sync;
 
+	/// Called when a file object is created.
+	///
+	/// The flags passed to this function has similar meaning to that of
+	/// [ZwCreateFile][ZwCreateFile]. You can convert them to flags accepted by
+	/// [CreateFile][CreateFile] using the
+	/// [`map_kernel_to_user_create_file_flags`][map_kernel_to_user_create_file_flags] helper
+	/// function.
+	///
+	/// [ZwCreateFile]: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-zwcreatefile
+	/// [CreateFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew
+	/// [map_kernel_to_user_create_file_flags]: fn.map_kernel_to_user_create_file_flags.html
 	fn create_file(
 		&self,
 		_file_name: &U16CStr,
@@ -778,6 +827,22 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Called when the last handle for the file object has been closed.
+	///
+	/// If [`info.delete_on_close`][delete_on_close] returns `true`, the file should be deleted in
+	/// this function.
+	///
+	/// Note that the file object hasn't been released and there might be more I/O operations before
+	/// [`close_file`][close_file] gets called. (This typically happens when the file is
+	/// memory-mapped.)
+	///
+	/// Normally [`close_file`][close_file] will be called shortly after this function. However, the
+	/// file object may also be reused, and in that case [`create_file`][create_file] will be called
+	/// instead.
+	///
+	/// [delete_on_close]: struct.OperationInfo.html#method.delete_on_close
+	/// [close_file]: trait.FileSystemHandler.html#method.close_file
+	/// [create_file]: trait.FileSystemHandler.html#method.create_file
 	fn cleanup(
 		&self,
 		_file_name: &U16CStr,
@@ -785,6 +850,13 @@ pub trait FileSystemHandler: Sync + Sized {
 		_context: &Self::Context,
 	) {}
 
+	/// Called when the last handle for the handle object has been closed and released.
+	///
+	/// This is the last function called during the lifetime of the file object. You can safely
+	/// release any resources allocated for it (such as file handles, buffers, etc.). The associated
+	/// [context][context] object will also be dropped once this function returns.
+	///
+	/// [context]: trait.FileSystemHandler.html#associatedtype.Context
 	fn close_file(
 		&self,
 		_file_name: &U16CStr,
@@ -792,6 +864,13 @@ pub trait FileSystemHandler: Sync + Sized {
 		_context: &Self::Context,
 	) {}
 
+	/// Reads data from the file.
+	///
+	/// The number of bytes that actually gets read should be returned.
+	///
+	/// See [ReadFile][ReadFile] for more information.
+	///
+	/// [ReadFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-readfile
 	fn read_file(
 		&self,
 		_file_name: &U16CStr,
@@ -803,6 +882,17 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Writes data to the file.
+	///
+	/// The number of bytes that actually gets written should be returned.
+	///
+	/// If [`info.write_to_eof`][write_to_eof] returns `true`, data should be written to the end of
+	/// file and the `offset` parameter should be ignored.
+	///
+	/// See [WriteFile][WriteFile] for more information.
+	///
+	/// [write_to_eof]: struct.OperationInfo.html#method.write_to_eof
+	/// [WriteFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-writefile
 	fn write_file(
 		&self,
 		_file_name: &U16CStr,
@@ -814,6 +904,11 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Flushes the buffer of the file and causes all buffered data to be written to the file.
+	///
+	/// See [FlushFileBuffers][FlushFileBuffers] for more information.
+	///
+	/// [FlushFileBuffers]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers
 	fn flush_file_buffers(
 		&self,
 		_file_name: &U16CStr,
@@ -823,6 +918,11 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Gets information about the file.
+	///
+	/// See [GetFileInformationByHandle][GetFileInformationByHandle]
+	///
+	/// [GetFileInformationByHandle]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
 	fn get_file_information(
 		&self,
 		_file_name: &U16CStr,
@@ -832,6 +932,17 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Lists all child items in the directory.
+	///
+	/// `fill_find_data` should be called for every child item in the directory.
+	///
+	/// It will only be called if [`find_files_with_pattern`][find_files_with_pattern] returns
+	/// `STATUS_NOT_IMPLEMENTED`.
+	///
+	/// See [FindFirstFile][FindFirstFile] for more information.
+	///
+	/// [find_files_with_pattern]: trait.FileSystemHandler.html#method.find_files_with_pattern
+	/// [FindFirstFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirstfilew
 	fn find_files(
 		&self,
 		_file_name: &U16CStr,
@@ -842,6 +953,21 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Lists all child items that matches the specified `pattern` in the directory.
+	///
+	/// `fill_find_data` should be called for every matching child item in the directory.
+	///
+	/// [`is_name_in_expression`][is_name_in_expression] can be used to determine if a file name
+	/// matches the pattern.
+	///
+	/// If this function returns `STATUS_NOT_IMPLEMENTED`, [`find_files`][find_files] will be called
+	/// instead and pattern matching will be handled directly by Dokan.
+	///
+	/// See [FindFirstFile][FindFirstFile] for more information.
+	///
+	/// [is_name_in_expression]: fn.is_name_in_expression.html
+	/// [find_files]: trait.FileSystemHandler.html#method.find_files
+	/// [FindFirstFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirstfilew
 	fn find_files_with_pattern(
 		&self,
 		_file_name: &U16CStr,
@@ -853,7 +979,15 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
-
+	/// Sets attributes of the file.
+	///
+	/// `file_attributes` can be combination of one or more [file attribute constants][constants]
+	/// defined by Windows.
+	///
+	/// See [SetFileAttributes][SetFileAttributes] for more information.
+	///
+	/// [constants]: https://docs.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
+	/// [SetFileAttributes]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileattributesw
 	fn set_file_attributes(
 		&self,
 		_file_name: &U16CStr,
@@ -864,6 +998,11 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Sets the time when the file was created, last accessed and last written.
+	///
+	/// See [SetFileTime][SetFileTime] for more information.
+	///
+	/// [SetFileTime]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfiletime
 	fn set_file_time(
 		&self,
 		_file_name: &U16CStr,
@@ -876,6 +1015,15 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Checks if the file can be deleted.
+	///
+	/// The file should not be deleted in this function. Instead, it should only check if the file
+	/// can be deleted and return `Ok` if that is possible.
+	///
+	/// It will also be called with [`info.delete_on_close`][delete_on_close] returning true to
+	/// notify that the file is no longer requested to be deleted.
+	///
+	/// [delete_on_close]: struct.OperationInfo.html#method.delete_on_close
 	fn delete_file(
 		&self,
 		_file_name: &U16CStr,
@@ -885,6 +1033,17 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Checks if the directory can be deleted.
+	///
+	/// Similar to [`delete_file`][delete_file], it should only check if the directory can be
+	/// deleted and delay the actual deletion to the [`cleanup`][cleanup] function.
+	///
+	/// It will also be called with [`info.delete_on_close`][delete_on_close] returning true to
+	/// notify that the directory is no longer requested to be deleted.
+	///
+	/// [delete_file]: trait.FileSystemHandler.html#method.delete_file
+	/// [cleanup]: trait.FileSystemHandler.html#method.cleanup
+	/// [delete_on_close]: struct.OperationInfo.html#method.delete_on_close
 	fn delete_directory(
 		&self,
 		_file_name: &U16CStr,
@@ -894,6 +1053,16 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Moves the file.
+	///
+	/// If the `new_file_name` already exists, the function should only replace the existing file
+	/// when `replace_if_existing` is `true`, otherwise it should return appropriate error.
+	///
+	/// Note that renaming is a special kind of moving and is also handled by this function.
+	///
+	/// See [MoveFileEx][MoveFileEx] for more information.
+	///
+	/// [MoveFileEx]: https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw
 	fn move_file(
 		&self,
 		_file_name: &U16CStr,
@@ -905,6 +1074,14 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Sets end-of-file position of the file.
+	///
+	/// The `offset` value is zero-based, so it actually refers to the offset to the byte
+	/// immediately following the last valid byte in the file.
+	///
+	/// See [FILE_END_OF_FILE_INFORMATION][FILE_END_OF_FILE_INFORMATION] for more information.
+	///
+	/// [FILE_END_OF_FILE_INFORMATION]: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/ns-ntddk-_file_end_of_file_information
 	fn set_end_of_file(
 		&self,
 		_file_name: &U16CStr,
@@ -915,6 +1092,14 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Sets allocation size of the file.
+	///
+	/// The allocation size is the number of bytes allocated in the underlying physical device for
+	/// the file.
+	///
+	/// See [FILE_ALLOCATION_INFORMATION][FILE_ALLOCATION_INFORMATION] for more information.
+	///
+	/// [FILE_ALLOCATION_INFORMATION]: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_allocation_information
 	fn set_allocation_size(
 		&self,
 		_file_name: &U16CStr,
@@ -925,6 +1110,15 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Locks the file for exclusive access.
+	///
+	/// It will only be called if [`MountFlags::FILELOCK_USER_MODE`][FILELOCK_USER_MODE] was
+	/// specified when mounting the volume, otherwise Dokan will take care of file locking.
+	///
+	/// See [LockFile][LockFile] for more information.
+	///
+	/// [FILELOCK_USER_MODE]: struct.MountFlags.html#associatedconstant.FILELOCK_USER_MODE
+	/// [LockFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfile
 	fn lock_file(
 		&self,
 		_file_name: &U16CStr,
@@ -936,6 +1130,15 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Unlocks the previously locked file.
+	///
+	/// It will only be called if [`MountFlags::FILELOCK_USER_MODE`][FILELOCK_USER_MODE] was
+	/// specified when mounting the volume, otherwise Dokan will take care of file locking.
+	///
+	/// See [UnlockFile][UnlockFile] for more information.
+	///
+	/// [FILELOCK_USER_MODE]: struct.MountFlags.html#associatedconstant.FILELOCK_USER_MODE
+	/// [UnlockFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-unlockfile
 	fn unlock_file(
 		&self,
 		_file_name: &U16CStr,
@@ -947,6 +1150,11 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Gets free space information about the disk.
+	///
+	/// See [GetDiskFreeSpaceEx][GetDiskFreeSpaceEx] for more information.
+	///
+	/// [GetDiskFreeSpaceEx]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getdiskfreespaceexw
 	fn get_disk_free_space(
 		&self,
 		_info: &OperationInfo<Self>,
@@ -954,6 +1162,11 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Gets information about the volume and file system.
+	///
+	/// See [GetVolumeInformation][GetVolumeInformation] for more information.
+	///
+	/// [GetVolumeInformation]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumeinformationbyhandlew
 	fn get_volume_information(
 		&self,
 		_info: &OperationInfo<Self>,
@@ -961,6 +1174,7 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Called when Dokan has successfully mounted the volume.
 	fn mounted(
 		&self,
 		_info: &OperationInfo<Self>,
@@ -968,6 +1182,7 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Called when Dokan is unmounting the volume.
 	fn unmounted(
 		&self,
 		_info: &OperationInfo<Self>,
@@ -975,6 +1190,15 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Gets security information of a file.
+	///
+	/// Size of the security descriptor in bytes should be returned on success. If the buffer is not
+	/// large enough, the number should still be returned, and `STATUS_BUFFER_OVERFLOW` will be
+	/// automatically passed to Dokan if it is larger than `buffer_length`.
+	///
+	/// See [GetFileSecurity][GetFileSecurity] for more information.
+	///
+	/// [GetFileSecurity]: https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getfilesecuritya
 	fn get_file_security(
 		&self,
 		_file_name: &U16CStr,
@@ -987,6 +1211,11 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Sets security information of a file.
+	///
+	/// See [SetFileSecurity][SetFileSecurity] for more information.
+	///
+	/// [SetFileSecurity]: https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setfilesecuritya
 	fn set_file_security(
 		&self,
 		_file_name: &U16CStr,
@@ -999,6 +1228,14 @@ pub trait FileSystemHandler: Sync + Sized {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
+	/// Lists all alternative streams of the file.
+	///
+	/// `fill_find_stream_data` should be called for every stream of the file, including the default
+	/// data stream `::$DATA`.
+	///
+	/// See [FindFirstStream][FindFirstStream] for more information.
+	///
+	/// [FindFirstStream]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirststreamw
 	fn find_streams(
 		&self,
 		_file_name: &U16CStr,
