@@ -1,0 +1,32 @@
+version: 1.3.1-{build}
+os: Visual Studio 2019
+branches:
+  only:
+    - master
+
+# To debug build issues, add your own fork to AppVeyor and uncomment below.
+# Connection details will be printed to the console output.
+# $blockRdp makes the build block until a file is deleted from the desktop.
+#init:
+#- ps: Invoke-Expression (Invoke-WebRequest 'https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1')
+#on_finish:
+#- ps: $blockRdp = $true; Invoke-Expression (Invoke-WebRequest 'https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1')
+
+install:
+ - ps: |
+      function Exec-External {
+          param(
+             [Parameter(Position=0,Mandatory=1)][scriptblock] $command
+          )
+          & $command
+          if ($LASTEXITCODE -ne 0) {
+              throw ("Command returned non-zero error-code ${LASTEXITCODE}: $command")
+          }
+      }
+ - ps: |
+      Write-Host "Dokan download..." -ForegroundColor Green
+      New-item -type directory -path C:\projects\dokan-dotnet\ -Force
+      Start-FileDownload 'https://github.com/dokan-dev/dokany/releases/download/v1.3.1.1000/DokanSetup_redist.exe' -FileName 'C:\projects\dokan-dotnet\DokanSetup.exe'
+      Write-Host "Dokan downloaded." -ForegroundColor Green
+ - cmd: |
+     C:\projects\dokan-dotnet\DokanSetup.exe /quiet
