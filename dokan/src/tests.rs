@@ -222,7 +222,7 @@ impl FileSystemHandler for TestHandler {
 	) -> Result<CreateFileInfo<Self::Context>, OperationError> {
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
-			"\\test_file_io" | "\\test_get_file_information" | "\\test_set_file_attributes" | "\\test_set_file_time" | "\\test_delete_file" | "\\test_move_file" | "\\test_set_end_of_file" | "\\test_set_allocation_size" | "\\test_lock_unlock_file" | "\\test_get_file_security" | "\\test_set_file_security" | "\\test_find_streams" => Ok(CreateFileInfo {
+			"\\test_file_io" | "\\test_get_file_information" | "\\test_set_file_attributes" | "\\test_set_file_time" | "\\test_delete_file" | "\\test_move_file" | "\\test_set_end_of_file" | "\\test_set_allocation_size" | "\\test_lock_unlock_file" | "\\test_get_file_security" | "\\test_get_file_security_overflow" | "\\test_set_file_security" | "\\test_find_streams" => Ok(CreateFileInfo {
 				context: None,
 				is_dir: true,
 				new_file_created: false,
@@ -651,21 +651,23 @@ impl FileSystemHandler for TestHandler {
 	) -> Result<u32, OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
-		if &file_name == "\\test_get_file_security" {
-			self.tx.send(HandlerSignal::GetFileSecurity(security_information, buffer_length)).unwrap();
-			let desc = create_test_descriptor();
-			let result = Ok(desc.len() as u32);
-			if desc.len() <= buffer_length as usize {
-				unsafe {
-					desc.as_ptr().copy_to_nonoverlapping(
-						security_descriptor as *mut u8,
-						desc.len(),
-					);
+		match file_name.as_ref() {
+			"\\test_get_file_security" => {
+				self.tx.send(HandlerSignal::GetFileSecurity(security_information, buffer_length)).unwrap();
+				let desc = create_test_descriptor();
+				let result = Ok(desc.len() as u32);
+				if desc.len() <= buffer_length as usize {
+					unsafe {
+						desc.as_ptr().copy_to_nonoverlapping(
+							security_descriptor as *mut u8,
+							desc.len(),
+						);
+					}
 				}
+				result
 			}
-			result
-		} else {
-			Err(OperationError::NtStatus(STATUS_ACCESS_DENIED))
+			"\\test_get_file_security_overflow" => Ok(buffer_length + 1),
+			_ => Err(OperationError::NtStatus(STATUS_ACCESS_DENIED)),
 		}
 	}
 
@@ -1059,6 +1061,23 @@ fn test_get_file_security() {
 }
 
 #[test]
+fn test_get_file_security_overflow() {
+	with_test_drive(|_rx| unsafe {
+		let path = convert_str("Z:\\test_get_file_security_overflow");
+		let mut ret_len = 0;
+		assert_eq!(GetFileSecurityW(
+			path.as_ptr(),
+			OWNER_SECURITY_INFORMATION,
+			ptr::null_mut(),
+			0,
+			&mut ret_len,
+		), FALSE);
+		assert_eq!(ret_len, 1);
+		assert_eq!(GetLastError(), ERROR_INSUFFICIENT_BUFFER);
+	});
+}
+
+#[test]
 fn test_set_file_security() {
 	with_test_drive(|rx| unsafe {
 		let path = convert_str("Z:\\test_set_file_security");
@@ -1067,7 +1086,7 @@ fn test_set_file_security() {
 		assert_eq!(SetFileSecurityW(path.as_ptr(), OWNER_SECURITY_INFORMATION, desc_ptr), TRUE);
 		let (sid, owner_defaulted) = get_descriptor_owner(desc_ptr);
 		assert_eq!(rx.recv().unwrap(), HandlerSignal::SetFileSecurity(desc.len() as u32, OWNER_SECURITY_INFORMATION, sid, owner_defaulted));
-	})
+	});
 }
 
 #[test]
