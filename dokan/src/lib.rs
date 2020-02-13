@@ -388,6 +388,17 @@ impl<'a, T: FileSystemHandler> OperationInfo<'a, T> {
 		unsafe { &*(self.file_info().Context as *const T::Context) }
 	}
 
+	fn drop_context(&mut self) {
+		unsafe {
+			let info = &mut *self.file_info;
+			let ptr = info.Context as *mut T;
+			if !ptr.is_null() {
+				mem::drop(Box::from_raw(ptr));
+				info.Context = 0;
+			}
+		}
+	}
+
 	/// Gets process ID of the calling process.
 	pub fn pid(&self) -> u32 { self.file_info().ProcessId }
 
@@ -854,9 +865,12 @@ pub trait FileSystemHandler: Sync + Sized {
 	///
 	/// This is the last function called during the lifetime of the file object. You can safely
 	/// release any resources allocated for it (such as file handles, buffers, etc.). The associated
-	/// [context][context] object will also be dropped once this function returns.
+	/// [context][context] object will also be dropped once this function returns. In case the file
+	/// object is reused and thus this function isn't called, the [context][context] will be dropped
+	/// before [create_file][create_file] gets called.
 	///
 	/// [context]: trait.FileSystemHandler.html#associatedtype.Context
+	/// [create_file]: trait.FileSystemHandler.html#method.create_file
 	fn close_file(
 		&self,
 		_file_name: &U16CStr,
@@ -1278,6 +1292,7 @@ extern "stdcall" fn create_file<T: FileSystemHandler>(
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let mut info = OperationInfo::<T> { file_info: dokan_file_info, phantom: PhantomData };
+		info.drop_context();
 		info.handler().create_file(
 			file_name,
 			security_context,
@@ -1321,10 +1336,9 @@ extern "stdcall" fn close_file<T: FileSystemHandler>(
 ) {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let mut info = OperationInfo::<T>::new(dokan_file_info);
 		info.handler().close_file(file_name, &info, info.context());
-		mem::drop(Box::from_raw((&*dokan_file_info).Context as *mut T::Context));
-		(&mut *dokan_file_info).Context = 0;
+		info.drop_context();
 	});
 }
 
