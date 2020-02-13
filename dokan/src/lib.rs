@@ -391,7 +391,7 @@ impl<'a, T: FileSystemHandler> OperationInfo<'a, T> {
 	fn drop_context(&mut self) {
 		unsafe {
 			let info = &mut *self.file_info;
-			let ptr = info.Context as *mut T;
+			let ptr = info.Context as *mut T::Context;
 			if !ptr.is_null() {
 				mem::drop(Box::from_raw(ptr));
 				info.Context = 0;
