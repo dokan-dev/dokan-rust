@@ -12,6 +12,9 @@ edition = "2018"
 links = "dokan"
 build = "build.rs"
 
+[badges]
+appveyor = { repository = "Liryna/dokan-rust" }
+
 [dependencies]
 libc = "0.2.66"
 winapi = { version = "0.3.8", features = ["basetsd", "fileapi", "minwinbase", "minwindef", "ntdef", "winnt"] }
