@@ -224,7 +224,7 @@ impl FileSystemHandler for TestHandler {
 		match file_name.as_ref() {
 			"\\test_file_io" | "\\test_get_file_information" | "\\test_set_file_attributes" | "\\test_set_file_time" | "\\test_delete_file" | "\\test_move_file" | "\\test_set_end_of_file" | "\\test_set_allocation_size" | "\\test_lock_unlock_file" | "\\test_get_file_security" | "\\test_get_file_security_overflow" | "\\test_set_file_security" | "\\test_find_streams" => Ok(CreateFileInfo {
 				context: None,
-				is_dir: true,
+				is_dir: false,
 				new_file_created: false,
 			}),
 			"\\" | "\\test_delete_directory" | "\\test_find_files" | "\\test_find_files_with_pattern" => {
