@@ -22,4 +22,5 @@ build_script:
   - cmd: cargo test --workspace --no-run
 
 test_script:
-  - cmd: cargo test --workspace -- --include-ignored
+  - cmd: cargo test --workspace
+  - cmd: cargo test --workspace -- --ignored
