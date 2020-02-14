@@ -1161,6 +1161,29 @@ fn test_operation_info() {
 	});
 }
 
+#[test]
+fn test_output_ptr_null() {
+	with_test_drive(|_rx| unsafe {
+		let path = convert_str("Z:\\");
+		assert_eq!(GetDiskFreeSpaceExW(
+			path.as_ptr(),
+			ptr::null_mut(),
+			ptr::null_mut(),
+			ptr::null_mut(),
+		), TRUE);
+		assert_eq!(GetVolumeInformationW(
+			path.as_ptr(),
+			ptr::null_mut(),
+			0,
+			ptr::null_mut(),
+			ptr::null_mut(),
+			ptr::null_mut(),
+			ptr::null_mut(),
+			0,
+		), TRUE);
+	})
+}
+
 struct ToRawStructStub {
 	should_fail: bool,
 }

@@ -1567,9 +1567,15 @@ extern "stdcall" fn get_disk_free_space<T: FileSystemHandler>(
 	panic::catch_unwind(|| {
 		let info = OperationInfo::<T>::new(dokan_file_info);
 		info.handler().get_disk_free_space(&info).and_then(|space_info| unsafe {
-			*free_bytes_available = space_info.available_byte_count;
-			*total_number_of_bytes = space_info.byte_count;
-			*total_number_of_free_bytes = space_info.free_byte_count;
+			if !free_bytes_available.is_null() {
+				*free_bytes_available = space_info.available_byte_count;
+			}
+			if !total_number_of_bytes.is_null() {
+				*total_number_of_bytes = space_info.byte_count;
+			}
+			if !total_number_of_free_bytes.is_null() {
+				*total_number_of_free_bytes = space_info.free_byte_count;
+			}
 			Ok(())
 		}).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
@@ -1592,9 +1598,15 @@ extern "stdcall" fn get_volume_information<T: FileSystemHandler>(
 				volume_info.name.as_ptr(),
 				(volume_info.name.len() + 1).min(volume_name_size as usize),
 			);
-			*volume_serial_number = volume_info.serial_number;
-			*maximum_component_length = volume_info.max_component_length;
-			*file_system_flags = volume_info.fs_flags;
+			if !volume_serial_number.is_null() {
+				*volume_serial_number = volume_info.serial_number;
+			}
+			if !maximum_component_length.is_null() {
+				*maximum_component_length = volume_info.max_component_length;
+			}
+			if !file_system_flags.is_null() {
+				*file_system_flags = volume_info.fs_flags;
+			}
 			file_system_name_buffer.copy_from_nonoverlapping(
 				volume_info.fs_name.as_ptr(),
 				(volume_info.fs_name.len() + 1).min(file_system_name_size as usize),
