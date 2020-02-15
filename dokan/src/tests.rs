@@ -206,11 +206,11 @@ fn create_test_descriptor() -> Vec<u8> {
 	}
 }
 
-impl FileSystemHandler for TestHandler {
+impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	type Context = Option<TestContext>;
 
 	fn create_file(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
 		_security_context: PDOKAN_IO_SECURITY_CONTEXT,
 		desired_access: u32,
@@ -218,7 +218,7 @@ impl FileSystemHandler for TestHandler {
 		share_access: u32,
 		create_disposition: u32,
 		create_options: u32,
-		info: &mut OperationInfo<Self>,
+		info: &mut OperationInfo<'a, 'b, Self>,
 	) -> Result<CreateFileInfo<Self::Context>, OperationError> {
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
@@ -301,10 +301,10 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn cleanup(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) {
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_close_file" {
@@ -313,10 +313,10 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn close_file(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) {
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_close_file" {
@@ -325,12 +325,12 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn read_file(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
 		offset: i64,
 		buffer: &mut [u8],
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<u32, OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -346,12 +346,12 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn write_file(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
 		offset: i64,
 		buffer: &[u8],
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<u32, OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -364,10 +364,10 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn flush_file_buffers(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -380,10 +380,10 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn get_file_information(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<FileInfo, OperationError> {
 		check_pid(info.pid())?;
 		Ok(FileInfo {
@@ -398,11 +398,11 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn find_files(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
 		mut fill_find_data: impl FnMut(&FindData) -> Result<(), FillDataError>,
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -423,12 +423,12 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn find_files_with_pattern(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
 		pattern: &U16CStr,
 		mut fill_find_data: impl FnMut(&FindData) -> Result<(), FillDataError>,
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -451,11 +451,11 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn set_file_attributes(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
 		file_attributes: u32,
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -470,13 +470,13 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn set_file_time(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
 		creation_time: SystemTime,
 		last_access_time: SystemTime,
 		last_write_time: SystemTime,
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -491,10 +491,10 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn delete_file(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -507,10 +507,10 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn delete_directory(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -523,12 +523,12 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn move_file(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
 		new_file_name: &U16CStr,
 		replace_if_existing: bool,
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -541,11 +541,11 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn set_end_of_file(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
 		offset: i64,
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -560,11 +560,11 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn set_allocation_size(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
 		alloc_size: i64,
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -577,12 +577,12 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn lock_file(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
 		offset: i64,
 		length: i64,
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -595,12 +595,12 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn unlock_file(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
 		offset: i64,
 		length: i64,
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -612,7 +612,7 @@ impl FileSystemHandler for TestHandler {
 		}
 	}
 
-	fn get_disk_free_space(&self, _info: &OperationInfo<Self>) -> Result<DiskSpaceInfo, OperationError> {
+	fn get_disk_free_space(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<DiskSpaceInfo, OperationError> {
 		Ok(DiskSpaceInfo {
 			byte_count: 2 * 1024 * 1024,
 			free_byte_count: 1024 * 1024,
@@ -620,7 +620,7 @@ impl FileSystemHandler for TestHandler {
 		})
 	}
 
-	fn get_volume_information(&self, _info: &OperationInfo<Self>) -> Result<VolumeInfo, OperationError> {
+	fn get_volume_information(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<VolumeInfo, OperationError> {
 		Ok(VolumeInfo {
 			name: convert_str("Test Drive"),
 			serial_number: 1,
@@ -630,24 +630,24 @@ impl FileSystemHandler for TestHandler {
 		})
 	}
 
-	fn mounted(&self, _info: &OperationInfo<Self>) -> Result<(), OperationError> {
+	fn mounted(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<(), OperationError> {
 		self.tx.send(HandlerSignal::Mounted).unwrap();
 		Ok(())
 	}
 
-	fn unmounted(&self, _info: &OperationInfo<Self>) -> Result<(), OperationError> {
+	fn unmounted(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<(), OperationError> {
 		self.tx.send(HandlerSignal::Unmounted).unwrap();
 		Ok(())
 	}
 
 	fn get_file_security(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
 		security_information: SECURITY_INFORMATION,
 		security_descriptor: PSECURITY_DESCRIPTOR,
 		buffer_length: u32,
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<u32, OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -672,13 +672,13 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn set_file_security(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
 		security_information: SECURITY_INFORMATION,
 		security_descriptor: PSECURITY_DESCRIPTOR,
 		buffer_length: u32,
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -692,11 +692,11 @@ impl FileSystemHandler for TestHandler {
 	}
 
 	fn find_streams(
-		&self,
+		&'b self,
 		file_name: &U16CStr,
 		mut fill_find_stream_data: impl FnMut(&FindStreamData) -> Result<(), FillDataError>,
-		info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();

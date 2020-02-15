@@ -361,16 +361,18 @@ impl Drop for Handle {
 
 /// Information about the current operation.
 #[derive(Debug)]
-pub struct OperationInfo<'a, T: FileSystemHandler> {
+pub struct OperationInfo<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b> {
 	file_info: PDOKAN_FILE_INFO,
-	phantom: PhantomData<&'a T>,
+	phantom_handler: PhantomData<&'b T>,
+	phantom_context: PhantomData<&'a T::Context>,
 }
 
-impl<'a, T: FileSystemHandler> OperationInfo<'a, T> {
-	fn new(file_info: PDOKAN_FILE_INFO) -> OperationInfo<'a, T> {
+impl<'a, 'b: 'a, 'c: 'b, T: FileSystemHandler<'b, 'c> + 'c> OperationInfo<'b, 'c, T> {
+	fn new(file_info: PDOKAN_FILE_INFO) -> Self {
 		OperationInfo {
 			file_info,
-			phantom: PhantomData,
+			phantom_handler: PhantomData,
+			phantom_context: PhantomData,
 		}
 	}
 
@@ -382,11 +384,11 @@ impl<'a, T: FileSystemHandler> OperationInfo<'a, T> {
 		unsafe { &*self.file_info().DokanOptions }
 	}
 
-	fn handler(&self) -> &'a T {
+	fn handler(&'a self) -> &'c T {
 		unsafe { &*(self.mount_options().GlobalContext as *const T) }
 	}
 
-	fn context(&self) -> &T::Context {
+	fn context(&'a self) -> &'b T::Context {
 		unsafe { &*(self.file_info().Context as *const T::Context) }
 	}
 
@@ -811,9 +813,9 @@ pub struct CreateFileInfo<T: Sync> {
 /// [cleanup]: trait.FileSystemHandler.html#method.cleanup
 /// [close_file]: trait.FileSystemHandler.html#method.close_file
 /// [create_file]: trait.FileSystemHandler.html#method.create_file
-pub trait FileSystemHandler: Sync + Sized {
+pub trait FileSystemHandler<'a, 'b: 'a>: Sync + Sized + 'b {
 	/// Type of the context associated with an open file object.
-	type Context: Sync;
+	type Context: Sync + 'a;
 
 	/// Called when a file object is created.
 	///
@@ -827,7 +829,7 @@ pub trait FileSystemHandler: Sync + Sized {
 	/// [CreateFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew
 	/// [map_kernel_to_user_create_file_flags]: fn.map_kernel_to_user_create_file_flags.html
 	fn create_file(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
 		_security_context: PDOKAN_IO_SECURITY_CONTEXT,
 		_desired_access: ACCESS_MASK,
@@ -835,7 +837,7 @@ pub trait FileSystemHandler: Sync + Sized {
 		_share_access: u32,
 		_create_disposition: u32,
 		_create_options: u32,
-		_info: &mut OperationInfo<Self>,
+		_info: &mut OperationInfo<'a, 'b, Self>,
 	) -> Result<CreateFileInfo<Self::Context>, OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -857,10 +859,10 @@ pub trait FileSystemHandler: Sync + Sized {
 	/// [close_file]: trait.FileSystemHandler.html#method.close_file
 	/// [create_file]: trait.FileSystemHandler.html#method.create_file
 	fn cleanup(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) {}
 
 	/// Called when the last handle for the handle object has been closed and released.
@@ -874,10 +876,10 @@ pub trait FileSystemHandler: Sync + Sized {
 	/// [context]: trait.FileSystemHandler.html#associatedtype.Context
 	/// [create_file]: trait.FileSystemHandler.html#method.create_file
 	fn close_file(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) {}
 
 	/// Reads data from the file.
@@ -888,12 +890,12 @@ pub trait FileSystemHandler: Sync + Sized {
 	///
 	/// [ReadFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-readfile
 	fn read_file(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
 		_offset: i64,
 		_buffer: &mut [u8],
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<u32, OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -910,12 +912,12 @@ pub trait FileSystemHandler: Sync + Sized {
 	/// [write_to_eof]: struct.OperationInfo.html#method.write_to_eof
 	/// [WriteFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-writefile
 	fn write_file(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
 		_offset: i64,
 		_buffer: &[u8],
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<u32, OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -926,10 +928,10 @@ pub trait FileSystemHandler: Sync + Sized {
 	///
 	/// [FlushFileBuffers]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers
 	fn flush_file_buffers(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -940,10 +942,10 @@ pub trait FileSystemHandler: Sync + Sized {
 	///
 	/// [GetFileInformationByHandle]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
 	fn get_file_information(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<FileInfo, OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -960,11 +962,11 @@ pub trait FileSystemHandler: Sync + Sized {
 	/// [find_files_with_pattern]: trait.FileSystemHandler.html#method.find_files_with_pattern
 	/// [FindFirstFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirstfilew
 	fn find_files(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
 		_fill_find_data: impl FnMut(&FindData) -> Result<(), FillDataError>,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -985,12 +987,12 @@ pub trait FileSystemHandler: Sync + Sized {
 	/// [find_files]: trait.FileSystemHandler.html#method.find_files
 	/// [FindFirstFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirstfilew
 	fn find_files_with_pattern(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
 		_pattern: &U16CStr,
 		_fill_find_data: impl FnMut(&FindData) -> Result<(), FillDataError>,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -1005,11 +1007,11 @@ pub trait FileSystemHandler: Sync + Sized {
 	/// [constants]: https://docs.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
 	/// [SetFileAttributes]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileattributesw
 	fn set_file_attributes(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
 		_file_attributes: u32,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -1020,13 +1022,13 @@ pub trait FileSystemHandler: Sync + Sized {
 	///
 	/// [SetFileTime]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfiletime
 	fn set_file_time(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
 		_creation_time: SystemTime,
 		_last_access_time: SystemTime,
 		_last_write_time: SystemTime,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -1041,10 +1043,10 @@ pub trait FileSystemHandler: Sync + Sized {
 	///
 	/// [delete_on_close]: struct.OperationInfo.html#method.delete_on_close
 	fn delete_file(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -1061,10 +1063,10 @@ pub trait FileSystemHandler: Sync + Sized {
 	/// [cleanup]: trait.FileSystemHandler.html#method.cleanup
 	/// [delete_on_close]: struct.OperationInfo.html#method.delete_on_close
 	fn delete_directory(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -1080,12 +1082,12 @@ pub trait FileSystemHandler: Sync + Sized {
 	///
 	/// [MoveFileEx]: https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw
 	fn move_file(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
 		_new_file_name: &U16CStr,
 		_replace_if_existing: bool,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -1099,11 +1101,11 @@ pub trait FileSystemHandler: Sync + Sized {
 	///
 	/// [FILE_END_OF_FILE_INFORMATION]: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/ns-ntddk-_file_end_of_file_information
 	fn set_end_of_file(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
 		_offset: i64,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -1117,11 +1119,11 @@ pub trait FileSystemHandler: Sync + Sized {
 	///
 	/// [FILE_ALLOCATION_INFORMATION]: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_allocation_information
 	fn set_allocation_size(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
 		_alloc_size: i64,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -1136,12 +1138,12 @@ pub trait FileSystemHandler: Sync + Sized {
 	/// [FILELOCK_USER_MODE]: struct.MountFlags.html#associatedconstant.FILELOCK_USER_MODE
 	/// [LockFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfile
 	fn lock_file(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
 		_offset: i64,
 		_length: i64,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -1156,12 +1158,12 @@ pub trait FileSystemHandler: Sync + Sized {
 	/// [FILELOCK_USER_MODE]: struct.MountFlags.html#associatedconstant.FILELOCK_USER_MODE
 	/// [UnlockFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-unlockfile
 	fn unlock_file(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
 		_offset: i64,
 		_length: i64,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -1172,8 +1174,8 @@ pub trait FileSystemHandler: Sync + Sized {
 	///
 	/// [GetDiskFreeSpaceEx]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getdiskfreespaceexw
 	fn get_disk_free_space(
-		&self,
-		_info: &OperationInfo<Self>,
+		&'b self,
+		_info: &OperationInfo<'a, 'b, Self>,
 	) -> Result<DiskSpaceInfo, OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -1184,24 +1186,24 @@ pub trait FileSystemHandler: Sync + Sized {
 	///
 	/// [GetVolumeInformation]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumeinformationbyhandlew
 	fn get_volume_information(
-		&self,
-		_info: &OperationInfo<Self>,
+		&'b self,
+		_info: &OperationInfo<'a, 'b, Self>,
 	) -> Result<VolumeInfo, OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
 	/// Called when Dokan has successfully mounted the volume.
 	fn mounted(
-		&self,
-		_info: &OperationInfo<Self>,
+		&'b self,
+		_info: &OperationInfo<'a, 'b, Self>,
 	) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
 	/// Called when Dokan is unmounting the volume.
 	fn unmounted(
-		&self,
-		_info: &OperationInfo<Self>,
+		&'b self,
+		_info: &OperationInfo<'a, 'b, Self>,
 	) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -1216,13 +1218,13 @@ pub trait FileSystemHandler: Sync + Sized {
 	///
 	/// [GetFileSecurity]: https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getfilesecuritya
 	fn get_file_security(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
 		_security_information: u32,
 		_security_descriptor: PSECURITY_DESCRIPTOR,
 		_buffer_length: u32,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<u32, OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -1233,13 +1235,13 @@ pub trait FileSystemHandler: Sync + Sized {
 	///
 	/// [SetFileSecurity]: https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setfilesecuritya
 	fn set_file_security(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
 		_security_information: u32,
 		_security_descriptor: PSECURITY_DESCRIPTOR,
 		_buffer_length: u32,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -1253,11 +1255,11 @@ pub trait FileSystemHandler: Sync + Sized {
 	///
 	/// [FindFirstStream]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirststreamw
 	fn find_streams(
-		&self,
+		&'b self,
 		_file_name: &U16CStr,
 		_fill_find_stream_data: impl FnMut(&FindStreamData) -> Result<(), FillDataError>,
-		_info: &OperationInfo<Self>,
-		_context: &Self::Context,
+		_info: &OperationInfo<'a, 'b, Self>,
+		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
@@ -1281,7 +1283,7 @@ const FILE_SUPERSEDE: u32 = 0;
 const FILE_OPEN_IF: u32 = 3;
 const FILE_OVERWRITE_IF: u32 = 5;
 
-extern "stdcall" fn create_file<T: FileSystemHandler>(
+extern "stdcall" fn create_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	security_context: PDOKAN_IO_SECURITY_CONTEXT,
 	desired_access: ACCESS_MASK,
@@ -1293,7 +1295,7 @@ extern "stdcall" fn create_file<T: FileSystemHandler>(
 ) -> NTSTATUS {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let mut info = OperationInfo::<T> { file_info: dokan_file_info, phantom: PhantomData };
+		let mut info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.drop_context();
 		info.handler().create_file(
 			file_name,
@@ -1320,31 +1322,31 @@ extern "stdcall" fn create_file<T: FileSystemHandler>(
 }
 
 #[allow(unused_must_use)]
-extern "stdcall" fn cleanup<T: FileSystemHandler>(
+extern "stdcall" fn cleanup<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().cleanup(file_name, &info, info.context());
 	});
 }
 
 #[allow(unused_must_use)]
-extern "stdcall" fn close_file<T: FileSystemHandler>(
+extern "stdcall" fn close_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let mut info = OperationInfo::<T>::new(dokan_file_info);
+		let mut info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().close_file(file_name, &info, info.context());
 		info.drop_context();
 	});
 }
 
-extern "stdcall" fn read_file<T: FileSystemHandler>(
+extern "stdcall" fn read_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	buffer: LPVOID,
 	buffer_length: DWORD,
@@ -1355,7 +1357,7 @@ extern "stdcall" fn read_file<T: FileSystemHandler>(
 	panic::catch_unwind(|| unsafe {
 		*read_length = 0;
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		let buffer = slice::from_raw_parts_mut(buffer as *mut u8, buffer_length as usize);
 		let result = info.handler()
 			.read_file(file_name, offset, buffer, &info, info.context());
@@ -1366,7 +1368,7 @@ extern "stdcall" fn read_file<T: FileSystemHandler>(
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn write_file<T: FileSystemHandler>(
+extern "stdcall" fn write_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	buffer: LPCVOID,
 	number_of_bytes_to_write: DWORD,
@@ -1377,7 +1379,7 @@ extern "stdcall" fn write_file<T: FileSystemHandler>(
 	panic::catch_unwind(|| unsafe {
 		*number_of_bytes_written = 0;
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		let buffer = slice::from_raw_parts(buffer as *mut u8, number_of_bytes_to_write as usize);
 		let result = info.handler()
 			.write_file(file_name, offset, buffer, &info, info.context());
@@ -1388,25 +1390,25 @@ extern "stdcall" fn write_file<T: FileSystemHandler>(
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn flush_file_buffers<T: FileSystemHandler>(
+extern "stdcall" fn flush_file_buffers<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().flush_file_buffers(file_name, &info, info.context()).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn get_file_information<T: FileSystemHandler>(
+extern "stdcall" fn get_file_information<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	buffer: LPBY_HANDLE_FILE_INFORMATION,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler()
 			.get_file_information(file_name, &info, info.context())
 			.and_then(|file_info| {
@@ -1416,7 +1418,7 @@ extern "stdcall" fn get_file_information<T: FileSystemHandler>(
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn find_files<T: FileSystemHandler>(
+extern "stdcall" fn find_files<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	fill_find_data: PFillFindData,
 	dokan_file_info: PDOKAN_FILE_INFO,
@@ -1424,12 +1426,12 @@ extern "stdcall" fn find_files<T: FileSystemHandler>(
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let fill_wrapper = fill_data_wrapper::<_, FindData>(fill_find_data, dokan_file_info);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().find_files(file_name, fill_wrapper, &info, info.context()).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn find_files_with_pattern<T: FileSystemHandler>(
+extern "stdcall" fn find_files_with_pattern<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	search_pattern: LPCWSTR,
 	fill_find_data: PFillFindData,
@@ -1439,24 +1441,24 @@ extern "stdcall" fn find_files_with_pattern<T: FileSystemHandler>(
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let search_pattern = U16CStr::from_ptr_str(search_pattern);
 		let fill_wrapper = fill_data_wrapper(fill_find_data, dokan_file_info);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().find_files_with_pattern(file_name, search_pattern, fill_wrapper, &info, info.context()).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn set_file_attributes<T: FileSystemHandler>(
+extern "stdcall" fn set_file_attributes<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	file_attributes: DWORD,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().set_file_attributes(file_name, file_attributes, &info, info.context()).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn set_file_time<T: FileSystemHandler>(
+extern "stdcall" fn set_file_time<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	creation_time: *const FILETIME,
 	last_access_time: *const FILETIME,
@@ -1465,7 +1467,7 @@ extern "stdcall" fn set_file_time<T: FileSystemHandler>(
 ) -> NTSTATUS {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		let creation_time = SystemTime::from_filetime(*creation_time);
 		let last_access_time = SystemTime::from_filetime(*last_access_time);
 		let last_write_time = SystemTime::from_filetime(*last_write_time);
@@ -1473,29 +1475,29 @@ extern "stdcall" fn set_file_time<T: FileSystemHandler>(
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn delete_file<T: FileSystemHandler>(
+extern "stdcall" fn delete_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().delete_file(file_name, &info, info.context()).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn delete_directory<T: FileSystemHandler>(
+extern "stdcall" fn delete_directory<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().delete_directory(file_name, &info, info.context()).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn move_file<T: FileSystemHandler>(
+extern "stdcall" fn move_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	new_file_name: LPCWSTR,
 	replace_if_existing: BOOL,
@@ -1504,36 +1506,36 @@ extern "stdcall" fn move_file<T: FileSystemHandler>(
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let new_file_name = U16CStr::from_ptr_str(new_file_name);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().move_file(file_name, new_file_name, replace_if_existing == TRUE, &info, info.context()).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn set_end_of_file<T: FileSystemHandler>(
+extern "stdcall" fn set_end_of_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	byte_offset: LONGLONG,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().set_end_of_file(file_name, byte_offset, &info, info.context()).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn set_allocation_size<T: FileSystemHandler>(
+extern "stdcall" fn set_allocation_size<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	alloc_size: LONGLONG,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().set_allocation_size(file_name, alloc_size, &info, info.context()).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn lock_file<T: FileSystemHandler>(
+extern "stdcall" fn lock_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	byte_offset: LONGLONG,
 	length: LONGLONG,
@@ -1541,13 +1543,13 @@ extern "stdcall" fn lock_file<T: FileSystemHandler>(
 ) -> NTSTATUS {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().lock_file(file_name, byte_offset, length, &info, info.context()).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 
-extern "stdcall" fn unlock_file<T: FileSystemHandler>(
+extern "stdcall" fn unlock_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	byte_offset: LONGLONG,
 	length: LONGLONG,
@@ -1555,19 +1557,19 @@ extern "stdcall" fn unlock_file<T: FileSystemHandler>(
 ) -> NTSTATUS {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().unlock_file(file_name, byte_offset, length, &info, info.context()).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn get_disk_free_space<T: FileSystemHandler>(
+extern "stdcall" fn get_disk_free_space<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	free_bytes_available: PULONGLONG,
 	total_number_of_bytes: PULONGLONG,
 	total_number_of_free_bytes: PULONGLONG,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
 	panic::catch_unwind(|| {
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().get_disk_free_space(&info).and_then(|space_info| unsafe {
 			if !free_bytes_available.is_null() {
 				*free_bytes_available = space_info.available_byte_count;
@@ -1583,7 +1585,7 @@ extern "stdcall" fn get_disk_free_space<T: FileSystemHandler>(
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn get_volume_information<T: FileSystemHandler>(
+extern "stdcall" fn get_volume_information<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	volume_name_buffer: LPWSTR,
 	volume_name_size: DWORD,
 	volume_serial_number: LPDWORD,
@@ -1594,7 +1596,7 @@ extern "stdcall" fn get_volume_information<T: FileSystemHandler>(
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
 	panic::catch_unwind(|| {
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().get_volume_information(&info).and_then(|volume_info| unsafe {
 			volume_name_buffer.copy_from_nonoverlapping(
 				volume_info.name.as_ptr(),
@@ -1618,21 +1620,21 @@ extern "stdcall" fn get_volume_information<T: FileSystemHandler>(
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn mounted<T: FileSystemHandler>(dokan_file_info: PDOKAN_FILE_INFO) -> NTSTATUS {
+extern "stdcall" fn mounted<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(dokan_file_info: PDOKAN_FILE_INFO) -> NTSTATUS {
 	panic::catch_unwind(|| {
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().mounted(&info).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn unmounted<T: FileSystemHandler>(dokan_file_info: PDOKAN_FILE_INFO) -> NTSTATUS {
+extern "stdcall" fn unmounted<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(dokan_file_info: PDOKAN_FILE_INFO) -> NTSTATUS {
 	panic::catch_unwind(|| {
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().unmounted(&info).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn get_file_security<T: FileSystemHandler>(
+extern "stdcall" fn get_file_security<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	security_information: PSECURITY_INFORMATION,
 	security_descriptor: PSECURITY_DESCRIPTOR,
@@ -1642,7 +1644,7 @@ extern "stdcall" fn get_file_security<T: FileSystemHandler>(
 ) -> NTSTATUS {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		let result = info.handler().get_file_security(
 			file_name,
 			*security_information,
@@ -1664,7 +1666,7 @@ extern "stdcall" fn get_file_security<T: FileSystemHandler>(
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn set_file_security<T: FileSystemHandler>(
+extern "stdcall" fn set_file_security<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	security_information: PSECURITY_INFORMATION,
 	security_descriptor: PSECURITY_DESCRIPTOR,
@@ -1673,7 +1675,7 @@ extern "stdcall" fn set_file_security<T: FileSystemHandler>(
 ) -> NTSTATUS {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().set_file_security(
 			file_name,
 			*security_information,
@@ -1685,7 +1687,7 @@ extern "stdcall" fn set_file_security<T: FileSystemHandler>(
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn find_streams<T: FileSystemHandler>(
+extern "stdcall" fn find_streams<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	fill_find_stream_data: PFillFindStreamData,
 	dokan_file_info: PDOKAN_FILE_INFO,
@@ -1693,7 +1695,7 @@ extern "stdcall" fn find_streams<T: FileSystemHandler>(
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let fill_wrapper = fill_data_wrapper(fill_find_stream_data, dokan_file_info);
-		let info = OperationInfo::<T>::new(dokan_file_info);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler().find_streams(file_name, fill_wrapper, &info, info.context()).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
@@ -1748,12 +1750,11 @@ impl Display for MountError {
 
 /// A builder that allows configuring and mounting a volume.
 #[derive(Debug)]
-pub struct Drive<'a> {
+pub struct Drive {
 	options: DOKAN_OPTIONS,
-	phantom: PhantomData<&'a U16CStr>,
 }
 
-impl<'a> Drive<'a> {
+impl Drive {
 	/// Creates a new instance of this builder with default settings.
 	pub fn new() -> Self {
 		Drive {
@@ -1768,7 +1769,6 @@ impl<'a> Drive<'a> {
 				AllocationUnitSize: 0,
 				SectorSize: 0,
 			},
-			phantom: PhantomData,
 		}
 	}
 
@@ -1785,13 +1785,13 @@ impl<'a> Drive<'a> {
 	}
 
 	/// Sets mount point path.
-	pub fn mount_point(&mut self, value: &'a impl AsRef<U16CStr>) -> &mut Self {
+	pub fn mount_point<'a, 'b: 'a>(&'a mut self, value: &'b impl AsRef<U16CStr>) -> &'a mut Self {
 		self.options.MountPoint = value.as_ref().as_ptr();
 		self
 	}
 
 	/// Sets UNC name of the network drive.
-	pub fn unc_name(&mut self, value: &'a impl AsRef<U16CStr>) -> &mut Self {
+	pub fn unc_name<'a, 'b: 'a>(&'a mut self, value: &'b impl AsRef<U16CStr>) -> &'a mut Self {
 		self.options.UNCName = value.as_ref().as_ptr();
 		self
 	}
@@ -1828,33 +1828,33 @@ impl<'a> Drive<'a> {
 	}
 
 	/// Mounts the volume and blocks the current thread until the volume gets unmounted.
-	pub fn mount<T: FileSystemHandler>(&mut self, handler: &T) -> Result<(), MountError> {
+	pub fn mount<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(&mut self, handler: &'b T) -> Result<(), MountError> {
 		let mut operations = DOKAN_OPERATIONS {
-			ZwCreateFile: Some(create_file::<T>),
-			Cleanup: Some(cleanup::<T>),
-			CloseFile: Some(close_file::<T>),
-			ReadFile: Some(read_file::<T>),
-			WriteFile: Some(write_file::<T>),
-			FlushFileBuffers: Some(flush_file_buffers::<T>),
-			GetFileInformation: Some(get_file_information::<T>),
-			FindFiles: Some(find_files::<T>),
-			FindFilesWithPattern: Some(find_files_with_pattern::<T>),
-			SetFileAttributes: Some(set_file_attributes::<T>),
-			SetFileTime: Some(set_file_time::<T>),
-			DeleteFile: Some(delete_file::<T>),
-			DeleteDirectory: Some(delete_directory::<T>),
-			MoveFile: Some(move_file::<T>),
-			SetEndOfFile: Some(set_end_of_file::<T>),
-			SetAllocationSize: Some(set_allocation_size::<T>),
-			LockFile: Some(lock_file::<T>),
-			UnlockFile: Some(unlock_file::<T>),
-			GetDiskFreeSpace: Some(get_disk_free_space::<T>),
-			GetVolumeInformation: Some(get_volume_information::<T>),
-			Mounted: Some(mounted::<T>),
-			Unmounted: Some(unmounted::<T>),
-			GetFileSecurity: Some(get_file_security::<T>),
-			SetFileSecurity: Some(set_file_security::<T>),
-			FindStreams: Some(find_streams::<T>),
+			ZwCreateFile: Some(create_file::<'a, 'b, T>),
+			Cleanup: Some(cleanup::<'a, 'b, T>),
+			CloseFile: Some(close_file::<'a, 'b, T>),
+			ReadFile: Some(read_file::<'a, 'b, T>),
+			WriteFile: Some(write_file::<'a, 'b, T>),
+			FlushFileBuffers: Some(flush_file_buffers::<'a, 'b, T>),
+			GetFileInformation: Some(get_file_information::<'a, 'b, T>),
+			FindFiles: Some(find_files::<'a, 'b, T>),
+			FindFilesWithPattern: Some(find_files_with_pattern::<'a, 'b, T>),
+			SetFileAttributes: Some(set_file_attributes::<'a, 'b, T>),
+			SetFileTime: Some(set_file_time::<'a, 'b, T>),
+			DeleteFile: Some(delete_file::<'a, 'b, T>),
+			DeleteDirectory: Some(delete_directory::<'a, 'b, T>),
+			MoveFile: Some(move_file::<'a, 'b, T>),
+			SetEndOfFile: Some(set_end_of_file::<'a, 'b, T>),
+			SetAllocationSize: Some(set_allocation_size::<'a, 'b, T>),
+			LockFile: Some(lock_file::<'a, 'b, T>),
+			UnlockFile: Some(unlock_file::<'a, 'b, T>),
+			GetDiskFreeSpace: Some(get_disk_free_space::<'a, 'b, T>),
+			GetVolumeInformation: Some(get_volume_information::<'a, 'b, T>),
+			Mounted: Some(mounted::<'a, 'b, T>),
+			Unmounted: Some(unmounted::<'a, 'b, T>),
+			GetFileSecurity: Some(get_file_security::<'a, 'b, T>),
+			SetFileSecurity: Some(set_file_security::<'a, 'b, T>),
+			FindStreams: Some(find_streams::<'a, 'b, T>),
 		};
 		self.options.GlobalContext = handler as *const T as u64;
 		let result = unsafe { DokanMain(&mut self.options, &mut operations) };
