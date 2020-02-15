@@ -50,6 +50,8 @@ use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::minwinbase::WIN32_FIND_DATAW;
 use winapi::um::winnt::{ACCESS_MASK, PSECURITY_DESCRIPTOR, PSECURITY_INFORMATION};
 
+pub use dokan_sys::{DOKAN_IO_SECURITY_CONTEXT, PDOKAN_IO_SECURITY_CONTEXT};
+
 /// Name of Dokan's kernel driver file.
 pub use dokan_sys::DOKAN_DRIVER_NAME as DRIVER_NAME;
 /// The major version number of Dokan that this wrapper is targeting.
