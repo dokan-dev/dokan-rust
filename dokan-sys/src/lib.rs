@@ -3,9 +3,12 @@
 #![allow(non_snake_case)]
 #![doc(html_root_url = "https://docs.rs/dokan-sys/1.3.1")]
 
-//! Raw FFI bindings for [Dokan](https://github.com/dokan-dev/dokany).
+//! Raw FFI bindings for [Dokan].
 //!
-//! For more information, refer to corresponding items in [Dokan's documentation](https://dokan-dev.github.io/dokany-doc/html/).
+//! For more information, refer to corresponding items in [Dokan's documentation].
+//!
+//! [Dokan]: https://github.com/dokan-dev/dokany
+//! [Dokan's documentation]: https://dokan-dev.github.io/dokany-doc/html/
 
 extern crate libc;
 extern crate winapi;
