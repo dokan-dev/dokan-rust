@@ -2,7 +2,7 @@ extern crate cc;
 
 use std::env;
 use std::fs;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use cc::Build;
 
@@ -18,6 +18,8 @@ fn run_generator() -> String {
 			.arg("src/generate_version.c")
 			.arg("/link")
 			.arg(format!("/OUT:{}/generate_version.exe", out_dir))
+			.stdout(Stdio::inherit())
+			.stderr(Stdio::inherit())
 			.output().unwrap()
 	} else {
 		compiler_cmd
@@ -25,6 +27,8 @@ fn run_generator() -> String {
 			.arg("-Isrc/dokany/sys")
 			.arg(format!("-o{}/generate_version.exe", out_dir))
 			.arg("src/generate_version.c")
+			.stdout(Stdio::inherit())
+			.stderr(Stdio::inherit())
 			.output().unwrap()
 	};
 	assert!(compiler_output.status.success());
@@ -82,6 +86,8 @@ fn build_dokan(version_major: &str) {
 			.arg("advapi32.lib")
 			.arg("shell32.lib")
 			.arg("user32.lib")
+			.stdout(Stdio::inherit())
+			.stderr(Stdio::inherit())
 			.output().unwrap()
 	} else {
 		compiler_cmd
@@ -94,6 +100,8 @@ fn build_dokan(version_major: &str) {
 			.arg(format!("-o{}/dokan{}.dll", out_dir, version_major))
 			.args(src)
 			.arg(format!("-Wl,--out-implib,{}/dokan{}.lib", out_dir, version_major))
+			.stdout(Stdio::inherit())
+			.stderr(Stdio::inherit())
 			.output().unwrap()
 	};
 	assert!(compiler_output.status.success());
