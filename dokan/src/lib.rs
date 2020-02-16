@@ -801,7 +801,7 @@ pub struct VolumeInfo {
 ///
 /// [create_file]: trait.FileSystemHandler.html#method.create_file
 #[derive(Debug, Clone)]
-pub struct CreateFileInfo<T: Sync> {
+pub struct CreateFileInfo<T> {
 	/// The context to be associated with the new file object.
 	pub context: T,
 
