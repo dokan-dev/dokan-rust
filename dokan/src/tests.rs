@@ -236,7 +236,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 			}
 			"\\test_open_requester_token" => {
 				let token = info.requester_token().unwrap();
-				self.tx.send(HandlerSignal::OpenRequesterToken(get_user_info(token.value()))).unwrap();
+				self.tx.send(HandlerSignal::OpenRequesterToken(get_user_info(token.as_raw_handle()))).unwrap();
 				Ok(CreateFileInfo {
 					context: None,
 					is_dir: false,
@@ -1211,10 +1211,11 @@ fn test_fill_data_error() {
 }
 
 struct DirectoryChangeIterator {
-	hd: Handle,
+	hd: TokenHandle,
 	buf: Pin<Box<Vec<u8>>>,
 	offset: usize,
-	he: Handle,
+	// Simply reuse the safe handle type as events are closed by CloseHandle as well.
+	he: TokenHandle,
 	overlapped: Pin<Box<OVERLAPPED>>,
 }
 
@@ -1234,10 +1235,10 @@ impl DirectoryChangeIterator {
 			let he = CreateEventW(ptr::null_mut(), FALSE, FALSE, ptr::null());
 			assert_ne!(he, INVALID_HANDLE_VALUE);
 			let mut result = DirectoryChangeIterator {
-				hd: Handle { value: hd },
+				hd: TokenHandle::from_raw_handle(hd),
 				buf: Box::pin(vec![0; mem::size_of::<FILE_NOTIFY_INFORMATION>() + MAX_PATH]),
 				offset: 0,
-				he: Handle { value: he },
+				he: TokenHandle::from_raw_handle(he),
 				overlapped: Box::pin(mem::zeroed()),
 			};
 			result.begin_read();
@@ -1248,9 +1249,9 @@ impl DirectoryChangeIterator {
 	fn begin_read(&mut self) {
 		unsafe {
 			*self.overlapped = mem::zeroed();
-			self.overlapped.hEvent = self.he.value();
+			self.overlapped.hEvent = self.he.as_raw_handle();
 			let result = ReadDirectoryChangesW(
-				self.hd.value(),
+				self.hd.as_raw_handle(),
 				self.buf.as_mut_ptr() as LPVOID,
 				self.buf.len() as u32,
 				FALSE,
@@ -1274,7 +1275,7 @@ impl Iterator for DirectoryChangeIterator {
 			if self.offset == 0 {
 				let mut ret_len = 0;
 				assert_eq!(GetOverlappedResult(
-					self.hd.value(),
+					self.hd.as_raw_handle(),
 					&mut *self.overlapped,
 					&mut ret_len,
 					TRUE,

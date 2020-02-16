@@ -36,6 +36,7 @@ mod tests;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::marker::PhantomData;
+use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{ptr, mem, panic, slice};
 
@@ -336,22 +337,39 @@ bitflags! {
 	}
 }
 
-/// A simple wrapper struct that holds a Win32 handle.
+/// A simple wrapper struct that holds the Win32 handle returned by
+/// [`OperationInfo::requester_token`].
 ///
 /// It calls [`CloseHandle`][CloseHandle] automatically when dropped.
 ///
+/// [`OperationInfo::requester_token`]: struct.OperationInfo.html#method.requester_token
 /// [CloseHandle]: https://docs.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-closehandle
 #[derive(Debug, Eq, PartialEq)]
-pub struct Handle {
+pub struct TokenHandle {
 	value: HANDLE,
 }
 
-impl Handle {
-	/// Gets the handle value.
-	pub fn value(&self) -> HANDLE { self.value }
+impl AsRawHandle for TokenHandle {
+	fn as_raw_handle(&self) -> HANDLE {
+		self.value
+	}
 }
 
-impl Drop for Handle {
+impl FromRawHandle for TokenHandle {
+	unsafe fn from_raw_handle(handle: HANDLE) -> TokenHandle {
+		TokenHandle { value: handle }
+	}
+}
+
+impl IntoRawHandle for TokenHandle {
+	fn into_raw_handle(mut self) -> HANDLE {
+		let value = self.value;
+		self.value = INVALID_HANDLE_VALUE;
+		value
+	}
+}
+
+impl Drop for TokenHandle {
 	fn drop(&mut self) {
 		if self.value != INVALID_HANDLE_VALUE {
 			unsafe { CloseHandle(self.value); }
@@ -475,12 +493,14 @@ impl<'a, 'b: 'a, 'c: 'b, T: FileSystemHandler<'b, 'c> + 'c> OperationInfo<'b, 'c
 	/// Gets the access token associated with the calling process.
 	///
 	/// Returns `None` on error.
-	pub fn requester_token(&self) -> Option<Handle> {
-		let value = unsafe { DokanOpenRequestorToken(self.file_info) };
-		if value == INVALID_HANDLE_VALUE {
-			None
-		} else {
-			Some(Handle { value })
+	pub fn requester_token(&self) -> Option<TokenHandle> {
+		unsafe {
+			let value = DokanOpenRequestorToken(self.file_info);
+			if value == INVALID_HANDLE_VALUE {
+				None
+			} else {
+				Some(TokenHandle::from_raw_handle(value))
+			}
 		}
 	}
 }

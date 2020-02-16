@@ -8,7 +8,6 @@
       <sourceFolder url="file://$MODULE_DIR$/dokan-sys/benches" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/target/debug/build/dokan-sys-d23935025f9cabfb/out" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/target/debug/build/libc-00c9ae7866b48a75/out" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/target/debug/build/winapi-70a978ebf309dd90/out" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/target/debug/build/winapi-x86_64-pc-windows-gnu-d6e1fd04971dd7b3/out" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/dokan/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/dokan/examples" isTestSource="false" />
@@ -16,7 +15,7 @@
       <sourceFolder url="file://$MODULE_DIR$/dokan/benches" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/target/debug/build/memchr-8ad2d4450eedf6db/out" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/target/debug/build/bitflags-b43d8d9e5e4d3ac1/out" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/target/debug/build/winapi-d6abb1aa3e067831/out" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/target/debug/build/winapi-f419a5b9b5d5c6e8/out" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/dokan-sys/target" />
       <excludeFolder url="file://$MODULE_DIR$/dokan/target" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
