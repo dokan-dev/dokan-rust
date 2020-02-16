@@ -24,10 +24,6 @@ extern crate dokan_sys;
 extern crate widestring;
 
 #[cfg(test)]
-#[macro_use]
-extern crate lazy_static;
-
-#[cfg(test)]
 mod tests;
 
 use std::error::Error;

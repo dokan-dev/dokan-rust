@@ -1,3 +1,4 @@
+extern crate lazy_static;
 extern crate parking_lot;
 extern crate regex;
 extern crate version_sync;
@@ -730,7 +731,7 @@ fn test_mount_error() {
 	assert_eq!(result, Err(MountError::MountError));
 }
 
-lazy_static! {
+lazy_static::lazy_static! {
 	static ref TEST_DRIVE_LOCK: Mutex<()> = Mutex::new(());
 }
 
