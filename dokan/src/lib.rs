@@ -800,6 +800,7 @@ pub struct VolumeInfo {
 /// Information about the opened file returned by [`FileSystemHandler::create_file`][create_file].
 ///
 /// [create_file]: trait.FileSystemHandler.html#method.create_file
+#[derive(Debug, Clone)]
 pub struct CreateFileInfo<T: Sync> {
 	/// The context to be associated with the new file object.
 	pub context: T,
