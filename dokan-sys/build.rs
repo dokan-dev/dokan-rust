@@ -67,6 +67,8 @@ fn build_dokan(version_major: &str) {
 	let src = fs::read_dir("src/dokany/dokan").unwrap()
 		.map(|d| d.unwrap().path())
 		.filter(|p| if let Some(ext) = p.extension() { ext == "c" } else { false });
+	let dll_name = format!("dokan{}.dll", version_major);
+	let dll_path = format!("{}/{}", out_dir, dll_name);
 	let compiler = Build::new().get_compiler();
 	let mut compiler_cmd = compiler.to_command();
 	let compiler_output = if compiler.is_like_msvc() {
@@ -81,7 +83,7 @@ fn build_dokan(version_major: &str) {
 			.arg("/link")
 			.arg("/DLL")
 			.arg("/DEF:src/dokany/dokan/dokan.def")
-			.arg(format!("/OUT:{}/dokan{}.dll", out_dir, version_major))
+			.arg(format!("/OUT:{}", dll_path))
 			.arg(format!("/IMPLIB:{}/dokan{}.lib", out_dir, version_major))
 			.arg("advapi32.lib")
 			.arg("shell32.lib")
@@ -97,7 +99,7 @@ fn build_dokan(version_major: &str) {
 			.arg("-D_UNICODE")
 			.arg("-Isrc/dokany/sys")
 			.arg("-shared")
-			.arg(format!("-o{}/dokan{}.dll", out_dir, version_major))
+			.arg(format!("-o{}", dll_path))
 			.args(src)
 			.arg(format!("-Wl,--out-implib,{}/dokan{}.lib", out_dir, version_major))
 			.stdout(Stdio::inherit())
@@ -105,6 +107,10 @@ fn build_dokan(version_major: &str) {
 			.output().unwrap()
 	};
 	assert!(compiler_output.status.success());
+	if let Ok(output_path) = env::var("DOKAN_DLL_OUTPUT_PATH") {
+		fs::copy(dll_path, format!("{}/{}", output_path, dll_name)).unwrap();
+	}
+	println!("cargo:rerun-if-env-changed=DOKAN_DLL_OUTPUT_PATH");
 	println!("cargo:rustc-link-search=native={}", out_dir);
 	println!("cargo:rerun-if-changed=src/dokany");
 }
