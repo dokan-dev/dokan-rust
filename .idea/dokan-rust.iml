@@ -16,6 +16,11 @@
       <sourceFolder url="file://$MODULE_DIR$/target/debug/build/memchr-8ad2d4450eedf6db/out" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/target/debug/build/bitflags-b43d8d9e5e4d3ac1/out" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/target/debug/build/winapi-f419a5b9b5d5c6e8/out" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/target/debug/build/serde-af5c43e6b9472e6f/out" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/target/debug/build/syn-b2ec548170cc0363/out" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/target/debug/build/proc-macro2-0890823b63b2c66a/out" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/target/debug/build/pulldown-cmark-c0fde59310f1a065/out" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/target/debug/build/unicase-df28e4c57a912d0b/out" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/dokan-sys/target" />
       <excludeFolder url="file://$MODULE_DIR$/dokan/target" />
       <excludeFolder url="file://$MODULE_DIR$/target" />

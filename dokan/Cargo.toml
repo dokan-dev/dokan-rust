@@ -23,3 +23,4 @@ winapi = { version = "0.3.8", features = ["std", "errhandlingapi", "handleapi", 
 lazy_static = "1.4.0"
 parking_lot = "0.10.0"
 regex = "1.3.4"
+version-sync = "0.8.1"

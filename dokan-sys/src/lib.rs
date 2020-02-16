@@ -1,6 +1,7 @@
 #![cfg(windows)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
+#![doc(html_root_url = "https://docs.rs/dokan-sys/1.3.1")]
 
 //! Raw FFI bindings for [Dokan](https://github.com/dokan-dev/dokany).
 //!
@@ -291,4 +292,14 @@ extern "stdcall" {
 	pub fn DokanNotifyXAttrUpdate(FilePath: LPCWSTR) -> BOOL;
 	pub fn DokanNotifyRename(OldPath: LPCWSTR, NewPath: LPCWSTR, IsDirectory: BOOL, IsInSameDirectory: BOOL) -> BOOL;
 	pub fn DokanNtStatusFromWin32(Error: DWORD) -> NTSTATUS;
+}
+
+#[cfg(test)]
+mod tests {
+	extern crate version_sync;
+
+	#[test]
+	fn test_html_root_url() {
+		version_sync::assert_html_root_url_updated!("src/lib.rs");
+	}
 }

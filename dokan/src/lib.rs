@@ -1,4 +1,5 @@
 #![cfg(windows)]
+#![doc(html_root_url = "https://docs.rs/dokan/1.3.1")]
 
 //! [Dokan][Dokan] is a user mode file system for Windows. It allows anyone to
 //! safely and easily develop new file systems on Windows.
@@ -25,10 +26,6 @@ extern crate widestring;
 #[cfg(test)]
 #[macro_use]
 extern crate lazy_static;
-#[cfg(test)]
-extern crate parking_lot;
-#[cfg(test)]
-extern crate regex;
 
 #[cfg(test)]
 mod tests;
