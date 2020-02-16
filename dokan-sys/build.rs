@@ -34,7 +34,7 @@ fn run_generator() -> String {
 	assert!(generate_output.status.success());
 	println!("cargo:rerun-if-changed=src/generate_version.c");
 
-	String::from_utf8(fs::read(format!("{}/version_major.txt", out_dir)).unwrap()).unwrap()
+	String::from_utf8(fs::read(format!("{}/version.txt", out_dir)).unwrap()).unwrap()
 }
 
 fn check_dokan_env(version_major: &str) -> bool {
@@ -102,9 +102,15 @@ fn build_dokan(version_major: &str) {
 }
 
 fn main() {
-	let version_major = run_generator();
+	let version = run_generator();
+	assert_eq!(
+		format!("dokan{}", version),
+		env::var("CARGO_PKG_VERSION").unwrap().split('+').last().unwrap(),
+		"Mismatch detected between crate version and bundled Dokan source version.",
+	);
+	let version_major = &version[..1];
 	println!("cargo:rustc-link-lib=dylib=dokan{}", version_major);
-	if !check_dokan_env(&version_major) {
-		build_dokan(&version_major)
+	if !check_dokan_env(version_major) {
+		build_dokan(version_major);
 	};
 }
