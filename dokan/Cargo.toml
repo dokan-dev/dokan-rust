@@ -5,6 +5,7 @@ authors = ["DDoSolitary <DDoSolitary@gmail.com>"]
 description = "Rust-friendly wrapper for Dokan (user mode file system library for Windows)"
 homepage = "https://dokan-dev.github.io"
 repository = "https://github.com/dokan-dev/dokan-rust"
+documentation = "https://docs.rs/dokan"
 keywords = ["dokan", "bindings", "driver", "filesystem"]
 categories = ["external-ffi-bindings"]
 readme = "README.md"
