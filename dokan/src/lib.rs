@@ -1748,11 +1748,12 @@ impl Display for MountError {
 
 /// A builder that allows configuring and mounting a volume.
 #[derive(Debug)]
-pub struct Drive {
+pub struct Drive<'a> {
 	options: DOKAN_OPTIONS,
+	phantom: PhantomData<&'a U16CStr>,
 }
 
-impl Drive {
+impl<'a> Drive<'a> {
 	/// Creates a new instance of this builder with default settings.
 	pub fn new() -> Self {
 		Drive {
@@ -1767,6 +1768,7 @@ impl Drive {
 				AllocationUnitSize: 0,
 				SectorSize: 0,
 			},
+			phantom: PhantomData,
 		}
 	}
 
@@ -1783,13 +1785,13 @@ impl Drive {
 	}
 
 	/// Sets mount point path.
-	pub fn mount_point<'a, 'b: 'a>(&'a mut self, value: &'b impl AsRef<U16CStr>) -> &'a mut Self {
+	pub fn mount_point(&mut self, value: &'a impl AsRef<U16CStr>) -> &mut Self {
 		self.options.MountPoint = value.as_ref().as_ptr();
 		self
 	}
 
 	/// Sets UNC name of the network drive.
-	pub fn unc_name<'a, 'b: 'a>(&'a mut self, value: &'b impl AsRef<U16CStr>) -> &'a mut Self {
+	pub fn unc_name(&mut self, value: &'a impl AsRef<U16CStr>) -> &mut Self {
 		self.options.UNCName = value.as_ref().as_ptr();
 		self
 	}
@@ -1826,33 +1828,33 @@ impl Drive {
 	}
 
 	/// Mounts the volume and blocks the current thread until the volume gets unmounted.
-	pub fn mount<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(&mut self, handler: &'b T) -> Result<(), MountError> {
+	pub fn mount<'b, 'c: 'b, T: FileSystemHandler<'b, 'c> + 'c>(&mut self, handler: &'c T) -> Result<(), MountError> {
 		let mut operations = DOKAN_OPERATIONS {
-			ZwCreateFile: Some(create_file::<'a, 'b, T>),
-			Cleanup: Some(cleanup::<'a, 'b, T>),
-			CloseFile: Some(close_file::<'a, 'b, T>),
-			ReadFile: Some(read_file::<'a, 'b, T>),
-			WriteFile: Some(write_file::<'a, 'b, T>),
-			FlushFileBuffers: Some(flush_file_buffers::<'a, 'b, T>),
-			GetFileInformation: Some(get_file_information::<'a, 'b, T>),
-			FindFiles: Some(find_files::<'a, 'b, T>),
-			FindFilesWithPattern: Some(find_files_with_pattern::<'a, 'b, T>),
-			SetFileAttributes: Some(set_file_attributes::<'a, 'b, T>),
-			SetFileTime: Some(set_file_time::<'a, 'b, T>),
-			DeleteFile: Some(delete_file::<'a, 'b, T>),
-			DeleteDirectory: Some(delete_directory::<'a, 'b, T>),
-			MoveFile: Some(move_file::<'a, 'b, T>),
-			SetEndOfFile: Some(set_end_of_file::<'a, 'b, T>),
-			SetAllocationSize: Some(set_allocation_size::<'a, 'b, T>),
-			LockFile: Some(lock_file::<'a, 'b, T>),
-			UnlockFile: Some(unlock_file::<'a, 'b, T>),
-			GetDiskFreeSpace: Some(get_disk_free_space::<'a, 'b, T>),
-			GetVolumeInformation: Some(get_volume_information::<'a, 'b, T>),
-			Mounted: Some(mounted::<'a, 'b, T>),
-			Unmounted: Some(unmounted::<'a, 'b, T>),
-			GetFileSecurity: Some(get_file_security::<'a, 'b, T>),
-			SetFileSecurity: Some(set_file_security::<'a, 'b, T>),
-			FindStreams: Some(find_streams::<'a, 'b, T>),
+			ZwCreateFile: Some(create_file::<'b, 'c, T>),
+			Cleanup: Some(cleanup::<'b, 'c, T>),
+			CloseFile: Some(close_file::<'b, 'c, T>),
+			ReadFile: Some(read_file::<'b, 'c, T>),
+			WriteFile: Some(write_file::<'b, 'c, T>),
+			FlushFileBuffers: Some(flush_file_buffers::<'b, 'c, T>),
+			GetFileInformation: Some(get_file_information::<'b, 'c, T>),
+			FindFiles: Some(find_files::<'b, 'c, T>),
+			FindFilesWithPattern: Some(find_files_with_pattern::<'b, 'c, T>),
+			SetFileAttributes: Some(set_file_attributes::<'b, 'c, T>),
+			SetFileTime: Some(set_file_time::<'b, 'c, T>),
+			DeleteFile: Some(delete_file::<'b, 'c, T>),
+			DeleteDirectory: Some(delete_directory::<'b, 'c, T>),
+			MoveFile: Some(move_file::<'b, 'c, T>),
+			SetEndOfFile: Some(set_end_of_file::<'b, 'c, T>),
+			SetAllocationSize: Some(set_allocation_size::<'b, 'c, T>),
+			LockFile: Some(lock_file::<'b, 'c, T>),
+			UnlockFile: Some(unlock_file::<'b, 'c, T>),
+			GetDiskFreeSpace: Some(get_disk_free_space::<'b, 'c, T>),
+			GetVolumeInformation: Some(get_volume_information::<'b, 'c, T>),
+			Mounted: Some(mounted::<'b, 'c, T>),
+			Unmounted: Some(unmounted::<'b, 'c, T>),
+			GetFileSecurity: Some(get_file_security::<'b, 'c, T>),
+			SetFileSecurity: Some(set_file_security::<'b, 'c, T>),
+			FindStreams: Some(find_streams::<'b, 'c, T>),
 		};
 		self.options.GlobalContext = handler as *const T as u64;
 		let result = unsafe { DokanMain(&mut self.options, &mut operations) };
