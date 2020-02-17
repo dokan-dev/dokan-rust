@@ -19,8 +19,8 @@ before_build:
   - cmd: git submodule update --init
 
 build_script:
-  - cmd: cargo test --workspace --no-run
+  - cmd: cargo test --release --workspace --no-run
 
 test_script:
-  - cmd: cargo test --workspace
-  - cmd: cargo test --workspace -- --ignored
+  - cmd: cargo test --release --workspace
+  - cmd: cargo test --release --workspace -- --ignored
