@@ -5,6 +5,8 @@ branches:
 
 environment:
   RUST_BACKTRACE: 1
+  AccessTokenDokanDoc:
+    secure: bWAI+3DIqfNZT/llXhEGiAsmSzJAmywFVyNgwHaTA5afb24GdHEQid6dRN5VJiTm
 
 install:
   - ps: |
@@ -25,3 +27,29 @@ build_script:
 test_script:
   - cmd: cargo test --release --workspace
   - cmd: cargo test --release --workspace -- --ignored
+
+on_success:
+    - ps: |
+          if ("$env:APPVEYOR_PULL_REQUEST_TITLE" -or "$env:APPVEYOR_REPO_BRANCH" -ne "master") {
+            return;
+          }
+
+          # Update documentation
+          cd $env:APPVEYOR_BUILD_FOLDER
+          git config --global user.email "appveyor@appveyor.org"
+          git config --global user.name "appveyor"
+          git.exe clone -b gh-pages --single-branch  https://lirynastark:$($env:AccessTokenDokanDoc)@github.com/dokan-dev/dokan-rust-doc.git doc
+          New-Item -ItemType Directory $env:APPVEYOR_BUILD_FOLDER\doc\html | Out-Null
+          Copy-Item $env:APPVEYOR_BUILD_FOLDER\target\doc\* -Destination $env:APPVEYOR_BUILD_FOLDER\doc\html\ -Recurse
+          cd $env:APPVEYOR_BUILD_FOLDER\doc\html\
+          if ($(git status --porcelain)) {
+            Write-Host "Update documentation..." -ForegroundColor Green
+            git add -A
+            Write-Host "All changes ready to commit" -ForegroundColor Green
+            git commit -m "Latest documentation on successful appveyor build $env:APPVEYOR_BUILD_VERSION auto-pushed to gh-pages"
+            Write-Host "Push changes..." -ForegroundColor Green
+            git push -f origin gh-pages
+            Write-Host "Pushed. Documentation updated!" -ForegroundColor Green
+          } else {
+            Write-Host "No documentation changes detected." -ForegroundColor Green
+          }
