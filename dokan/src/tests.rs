@@ -1,7 +1,6 @@
 extern crate lazy_static;
 extern crate parking_lot;
 extern crate regex;
-extern crate version_sync;
 
 use std::pin::Pin;
 use std::process;
@@ -32,11 +31,6 @@ const FILE_WRITE_THROUGH: u32 = 2;
 const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 32;
 const FILE_NON_DIRECTORY_FILE: u32 = 64;
 const FILE_DEVICE_DISK_FILE_SYSTEM: u32 = 8;
-
-#[test]
-fn test_html_root_url() {
-	version_sync::assert_html_root_url_updated!("src/lib.rs");
-}
 
 #[test]
 fn test_version() {
