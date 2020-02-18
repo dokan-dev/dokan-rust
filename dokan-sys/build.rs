@@ -4,34 +4,28 @@ use std::env;
 use std::fs;
 use std::process::{Command, Stdio};
 
-use cc::Build;
+use cc::{Build, Tool};
 
-fn run_generator() -> String {
+fn run_generator(compiler: &Tool) -> String {
 	let out_dir = env::var("OUT_DIR").unwrap();
-	let compiler = Build::new().get_compiler();
 	let mut compiler_cmd = compiler.to_command();
-	let compiler_output = if compiler.is_like_msvc() {
+	compiler_cmd
+		.stdout(Stdio::inherit())
+		.stderr(Stdio::inherit())
+		.arg("-Isrc/dokany/dokan")
+		.arg("-Isrc/dokany/sys");
+	if compiler.is_like_msvc() {
 		compiler_cmd
-			.arg("/Isrc/dokany/dokan")
-			.arg("/Isrc/dokany/sys")
 			.arg(format!("/Fo{}/", out_dir))
 			.arg("src/generate_version.c")
 			.arg("/link")
 			.arg(format!("/OUT:{}/generate_version.exe", out_dir))
-			.stdout(Stdio::inherit())
-			.stderr(Stdio::inherit())
-			.output().unwrap()
 	} else {
 		compiler_cmd
-			.arg("-Isrc/dokany/dokan")
-			.arg("-Isrc/dokany/sys")
 			.arg(format!("-o{}/generate_version.exe", out_dir))
 			.arg("src/generate_version.c")
-			.stdout(Stdio::inherit())
-			.stderr(Stdio::inherit())
-			.output().unwrap()
 	};
-	assert!(compiler_output.status.success());
+	assert!(compiler_cmd.output().unwrap().status.success());
 	let generate_output = Command::new(format!("{}/generate_version.exe", out_dir))
 		.current_dir(&out_dir)
 		.output().unwrap();
@@ -58,7 +52,7 @@ fn check_dokan_env(version_major: &str) -> bool {
 	}
 }
 
-fn build_dokan(version_major: &str) {
+fn build_dokan(compiler: &Tool, version_major: &str) {
 	if &env::var("CARGO_CFG_TARGET_ENV").unwrap() == "gnu" {
 		panic!("Building from source is not supported for the GNU toolchain.");
 	}
@@ -69,15 +63,17 @@ fn build_dokan(version_major: &str) {
 		.filter(|p| if let Some(ext) = p.extension() { ext == "c" } else { false });
 	let dll_name = format!("dokan{}.dll", version_major);
 	let dll_path = format!("{}/{}", out_dir, dll_name);
-	let compiler = Build::new().get_compiler();
 	let mut compiler_cmd = compiler.to_command();
-	let compiler_output = if compiler.is_like_msvc() {
+	compiler_cmd
+		.stdout(Stdio::inherit())
+		.stderr(Stdio::inherit())
+		.arg("-D_WINDLL")
+		.arg("-D_EXPORTING")
+		.arg("-DUNICODE")
+		.arg("-D_UNICODE")
+		.arg("-Isrc/dokany/sys");
+	if compiler.is_like_msvc() {
 		compiler_cmd
-			.arg("/D_WINDLL")
-			.arg("/D_EXPORTING")
-			.arg("/DUNICODE")
-			.arg("/D_UNICODE")
-			.arg("/Isrc/dokany/sys")
 			.arg(format!("/Fo{}/", out_dir))
 			.args(src)
 			.arg("/link")
@@ -88,25 +84,14 @@ fn build_dokan(version_major: &str) {
 			.arg("advapi32.lib")
 			.arg("shell32.lib")
 			.arg("user32.lib")
-			.stdout(Stdio::inherit())
-			.stderr(Stdio::inherit())
-			.output().unwrap()
 	} else {
 		compiler_cmd
-			.arg("-D_WINDLL")
-			.arg("-D_EXPORTING")
-			.arg("-DUNICODE")
-			.arg("-D_UNICODE")
-			.arg("-Isrc/dokany/sys")
 			.arg("-shared")
 			.arg(format!("-o{}", dll_path))
 			.args(src)
 			.arg(format!("-Wl,--out-implib,{}/dokan{}.lib", out_dir, version_major))
-			.stdout(Stdio::inherit())
-			.stderr(Stdio::inherit())
-			.output().unwrap()
 	};
-	assert!(compiler_output.status.success());
+	assert!(compiler_cmd.output().unwrap().status.success());
 	if let Ok(output_path) = env::var("DOKAN_DLL_OUTPUT_PATH") {
 		fs::copy(dll_path, format!("{}/{}", output_path, dll_name)).unwrap();
 	}
@@ -116,7 +101,8 @@ fn build_dokan(version_major: &str) {
 }
 
 fn main() {
-	let version = run_generator();
+	let compiler = Build::new().get_compiler();
+	let version = run_generator(&compiler);
 	assert_eq!(
 		format!("dokan{}", version),
 		env::var("CARGO_PKG_VERSION").unwrap().split('+').last().unwrap(),
@@ -125,6 +111,6 @@ fn main() {
 	let version_major = &version[..1];
 	println!("cargo:rustc-link-lib=dylib=dokan{}", version_major);
 	if !check_dokan_env(version_major) {
-		build_dokan(version_major);
+		build_dokan(&compiler, version_major);
 	};
 }
