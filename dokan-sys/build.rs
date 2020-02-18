@@ -6,6 +6,22 @@ use std::process::{Command, Stdio};
 
 use cc::{Build, Tool};
 
+fn print_env(compiler: &Tool) {
+	eprintln!("Environment variables:");
+	for (k, v) in env::vars() {
+		eprintln!("{}={}", k, v);
+	}
+	eprintln!("\nCompiler:\n{}", compiler.path().to_string_lossy());
+	eprintln!("\nCompiler arguments:");
+	for arg in compiler.args().iter() {
+		eprintln!("{}", arg.to_string_lossy());
+	}
+	eprintln!("\nCompiler environment variables:");
+	for (k, v) in compiler.env().iter() {
+		eprintln!("{}={}", k.to_string_lossy(), v.to_string_lossy());
+	}
+}
+
 fn run_generator(compiler: &Tool) -> String {
 	let out_dir = env::var("OUT_DIR").unwrap();
 	let mut compiler_cmd = compiler.to_command();
@@ -102,6 +118,7 @@ fn build_dokan(compiler: &Tool, version_major: &str) {
 
 fn main() {
 	let compiler = Build::new().get_compiler();
+	print_env(&compiler);
 	let version = run_generator(&compiler);
 	assert_eq!(
 		format!("dokan{}", version),
