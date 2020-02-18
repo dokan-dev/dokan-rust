@@ -1,5 +1,5 @@
 #![cfg(windows)]
-#![doc(html_root_url = "https://docs.rs/dokan/1.3.1")]
+#![doc(html_root_url = "https://docs.rs/dokan/0.1.0-alpha.3+dokan131")]
 
 //! [Dokan] is a user mode file system for Windows. It allows anyone to safely and easily develop
 //! new file systems on Windows.

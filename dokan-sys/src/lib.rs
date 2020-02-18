@@ -1,7 +1,7 @@
 #![cfg(windows)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
-#![doc(html_root_url = "https://docs.rs/dokan-sys/1.3.1")]
+#![doc(html_root_url = "https://docs.rs/dokan-sys/0.1.0-alpha.3+dokan131")]
 
 //! Raw FFI bindings for [Dokan].
 //!
