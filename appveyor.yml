@@ -40,7 +40,7 @@ on_success:
           git config --global user.name "appveyor"
           git.exe clone -b gh-pages --single-branch  https://lirynastark:$($env:AccessTokenDokanDoc)@github.com/dokan-dev/dokan-rust-doc.git doc
           New-Item -ItemType Directory $env:APPVEYOR_BUILD_FOLDER\doc\html | Out-Null
-          Copy-Item $env:APPVEYOR_BUILD_FOLDER\target\doc\* -Destination $env:APPVEYOR_BUILD_FOLDER\doc\html\ -Recurse
+          Copy-Item $env:APPVEYOR_BUILD_FOLDER\target\doc\* -Destination $env:APPVEYOR_BUILD_FOLDER\doc\html\ -Recurse -Force
           cd $env:APPVEYOR_BUILD_FOLDER\doc\html\
           if ($(git status --porcelain)) {
             Write-Host "Update documentation..." -ForegroundColor Green
