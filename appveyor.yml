@@ -17,7 +17,8 @@ install:
   - ps: $Env:PATH = "$Env:PATH;C:\Users\appveyor\.cargo\bin"
 
 before_build:
-  - ps: Update-AppveyorBuild -Version (git describe --all --long).Split("/")[1]
+  - ps: $version = (git describe --all --long).Split("/")[1]
+  - ps: Update-AppveyorBuild -Version $version
   - cmd: git submodule update --init
 
 build_script:
@@ -29,27 +30,25 @@ test_script:
   - cmd: cargo test --release --workspace -- --ignored
 
 on_success:
-    - ps: |
-          if ("$env:APPVEYOR_PULL_REQUEST_TITLE" -or "$env:APPVEYOR_REPO_BRANCH" -ne "master") {
-            return;
-          }
-
-          # Update documentation
-          cd $env:APPVEYOR_BUILD_FOLDER
-          git config --global user.email "appveyor@appveyor.org"
-          git config --global user.name "appveyor"
-          git.exe clone -b gh-pages --single-branch  https://lirynastark:$($env:AccessTokenDokanDoc)@github.com/dokan-dev/dokan-rust-doc.git doc
-          New-Item -ItemType Directory $env:APPVEYOR_BUILD_FOLDER\doc\html | Out-Null
-          Copy-Item $env:APPVEYOR_BUILD_FOLDER\target\doc\* -Destination $env:APPVEYOR_BUILD_FOLDER\doc\html\ -Recurse -Force
-          cd $env:APPVEYOR_BUILD_FOLDER\doc\html\
-          if ($(git status --porcelain)) {
-            Write-Host "Update documentation..." -ForegroundColor Green
-            git add -A
-            Write-Host "All changes ready to commit" -ForegroundColor Green
-            git commit -m "Latest documentation on successful appveyor build $env:APPVEYOR_BUILD_VERSION auto-pushed to gh-pages"
-            Write-Host "Push changes..." -ForegroundColor Green
-            git push -f origin gh-pages
-            Write-Host "Pushed. Documentation updated!" -ForegroundColor Green
-          } else {
-            Write-Host "No documentation changes detected." -ForegroundColor Green
-          }
+  - ps: |
+      if ("$Env:APPVEYOR_REPO_TAG" -ne $true) {
+          return;
+      }
+      git config --global user.email appveyor@appveyor.org
+      git config --global user.name appveyor
+      git clone -b gh-pages --single-branch https://lirynastark:$(Env:AccessTokenDokanDoc)@github.com/dokan-dev/dokan-rust-doc.git doc
+      if (Test-Path doc\html) {
+          Remove-Item -Recurse -Force doc\html\*
+      }
+      mkdir doc\html
+      Copy-Item -Recurse target\doc\* doc\html\
+      cd doc
+      if ($(git status --porcelain)) {
+          Write-Host "Updating documentation..." -ForegroundColor Green
+          git add -A
+          git commit -m "Automatically update documentation for $version"
+          git push
+          Write-Host -ForegroundColor Green "Documentation updated!"
+      } else {
+          Write-Host -ForegroundColor Green "No documentation changes detected."
+      }
