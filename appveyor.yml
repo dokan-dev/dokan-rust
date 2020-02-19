@@ -33,6 +33,10 @@ before_build:
   - ps: $version = (git describe --all --long).Split("/")[1]
   - ps: Update-AppveyorBuild -Version $version
   - cmd: git submodule update --init
+  - ps: |
+      if ($Env:USE_INSTALLED_LIB -ne $true) {
+          $Env:DOKAN_DLL_OUTPUT_PATH = "$Env:APPVEYOR_BUILD_FOLDER\target\release"
+      }
 
 build_script:
   - cmd: cargo test --release --workspace --no-run
