@@ -23,4 +23,4 @@ Note that the versions of the `dokan-sys` crate, the linked import library and t
 # Usage
 
 - `dokan-sys` can be used in exactly the same way as the native Dokan library. Read [Dokan's documentation](https://dokan-dev.github.io/dokany-doc/html/) for more information.
-- `dokan` has [detailed documentation hosted by docs.rs](https://docs.rs/dokan). You can also find some examples in [the unit tests](https://github.com/dokan-dev/dokan-rust/blob/master/dokan/src/tests.rs) and existing projects like [yasfw](https://github.com/DDoSolitary/yasfw).
+- `dokan` has [detailed documentation](https://dokan-dev.github.io/dokan-rust-doc/html/dokan/) available. You can also find some examples in [the unit tests](https://github.com/dokan-dev/dokan-rust/blob/master/dokan/src/tests.rs) and existing projects like [yasfw](https://github.com/DDoSolitary/yasfw).
