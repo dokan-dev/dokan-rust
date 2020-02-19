@@ -29,25 +29,29 @@ test_script:
   - cmd: cargo test --release --workspace
   - cmd: cargo test --release --workspace -- --ignored
 
-on_success:
+deploy_script:
   - ps: |
+      $ErrorActionPreference = "Stop"
       if ("$Env:APPVEYOR_REPO_TAG" -ne $true) {
           return;
       }
       git config --global user.email appveyor@appveyor.org
       git config --global user.name appveyor
-      git clone -b gh-pages --single-branch https://lirynastark:$(Env:AccessTokenDokanDoc)@github.com/dokan-dev/dokan-rust-doc.git doc
+      cmd /c "git clone https://lirynastark:$($Env:AccessTokenDokanDoc)@github.com/dokan-dev/dokan-rust-doc.git doc 2>&1"
+      if ($LASTEXITCODE -ne 0) { $host.SetShouldExit($LASTEXITCODE) }
       if (Test-Path doc\html) {
           Remove-Item -Recurse -Force doc\html\*
+      } else {
+          mkdir doc\html
       }
-      mkdir doc\html
       Copy-Item -Recurse target\doc\* doc\html\
       cd doc
       if ($(git status --porcelain)) {
           Write-Host "Updating documentation..." -ForegroundColor Green
           git add -A
           git commit -m "Automatically update documentation for $version"
-          git push
+          cmd /c "git push 2>&1"
+          if ($LASTEXITCODE -ne 0) { $host.SetShouldExit($LASTEXITCODE) }
           Write-Host -ForegroundColor Green "Documentation updated!"
       } else {
           Write-Host -ForegroundColor Green "No documentation changes detected."
