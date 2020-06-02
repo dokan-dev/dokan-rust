@@ -324,7 +324,7 @@ bitflags! {
 		///
 		/// [`FileSystemHandler`]: trait.FileSystemHandler.html
 		/// [CreateFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew
-		const OPTIMIZE_SINGLE_NAME_SEARCH = DOKAN_OPTION_OPTIMIZE_SINGLE_NAME_SEARCH;
+		const ENABLE_FCB_GARBAGE_COLLECTION = DOKAN_OPTION_ENABLE_FCB_GARBAGE_COLLECTION;
 	}
 }
 

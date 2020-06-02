@@ -38,7 +38,7 @@ pub const DOKAN_OPTION_CURRENT_SESSION: ULONG = 128;
 pub const DOKAN_OPTION_FILELOCK_USER_MODE: ULONG = 256;
 pub const DOKAN_OPTION_ENABLE_NOTIFICATION_API: ULONG = 512;
 pub const DOKAN_OPTION_DISABLE_OPLOCKS: ULONG = 1024;
-pub const DOKAN_OPTION_OPTIMIZE_SINGLE_NAME_SEARCH: ULONG = 2048;
+pub const DOKAN_OPTION_ENABLE_FCB_GARBAGE_COLLECTION: ULONG = 2048;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -267,7 +267,7 @@ pub struct DOKAN_CONTROL {
 	pub MountPoint: [WCHAR; MAX_PATH],
 	pub UNCName: [WCHAR; 64],
 	pub DeviceName: [WCHAR; 64],
-	pub DeviceObject: PVOID64,
+	pub VolumeDeviceObject: PVOID64,
 	pub SessionId: ULONG,
 }
 
@@ -277,7 +277,6 @@ extern "stdcall" {
 	pub fn DokanMain(DokanOptions: PDOKAN_OPTIONS, DokanOperations: PDOKAN_OPERATIONS) -> c_int;
 	pub fn DokanUnmount(DriveLetter: WCHAR) -> BOOL;
 	pub fn DokanRemoveMountPoint(MountPoint: LPCWSTR) -> BOOL;
-	pub fn DokanRemoveMountPointEx(MountPoint: LPCWSTR, Safe: BOOL) -> BOOL;
 	pub fn DokanIsNameInExpression(Expression: LPCWSTR, Name: LPCWSTR, IgnoreCase: BOOL) -> BOOL;
 	pub fn DokanVersion() -> ULONG;
 	pub fn DokanDriverVersion() -> ULONG;

@@ -17,16 +17,15 @@ environment:
       USE_INSTALLED_LIB: "true"
 
 install:
-  - ps: |
-      Invoke-WebRequest https://github.com/dokan-dev/dokany/releases/download/v1.3.1.1000/DokanSetup_redist.exe -OutFile "$Env:TEMP\DokanSetup.exe"
-      Start-Process "$Env:TEMP\DokanSetup.exe" -ArgumentList "/quiet /norestart" -Wait
   - ps: Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile "$Env:TEMP\rustup-init.exe"
   - cmd: "\"%TEMP%\\rustup-init.exe\" -y --default-host %ARCH%-pc-windows-msvc"
   - ps: $Env:PATH = "$Env:PATH;C:\Users\appveyor\.cargo\bin"
   - ps: |
       if ($Env:USE_INSTALLED_LIB -eq $true) {
-          $Env:DokanLibrary1_LibraryPath_x64 = "C:\Program Files\Dokan\Dokan Library-1.3.1\lib\"
-          $Env:DokanLibrary1_LibraryPath_x86 = "C:\Program Files\Dokan\Dokan Library-1.3.1\x86\lib\"
+          Invoke-WebRequest https://github.com/dokan-dev/dokany/releases/download/v1.4.0.1000/DokanSetup_redist.exe -OutFile "$Env:TEMP\DokanSetup.exe"
+          Start-Process "$Env:TEMP\DokanSetup.exe" -ArgumentList "/quiet /norestart" -Wait
+          $Env:DokanLibrary1_LibraryPath_x64 = "C:\Program Files\Dokan\Dokan Library-1.4.0\lib\"
+          $Env:DokanLibrary1_LibraryPath_x86 = "C:\Program Files\Dokan\Dokan Library-1.4.0\x86\lib\"
       }
 
 before_build:
