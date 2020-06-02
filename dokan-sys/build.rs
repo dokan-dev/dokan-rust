@@ -69,10 +69,6 @@ fn check_dokan_env(version_major: &str) -> bool {
 }
 
 fn build_dokan(compiler: &Tool, version_major: &str) {
-	if &env::var("CARGO_CFG_TARGET_ENV").unwrap() == "gnu" {
-		panic!("Building from source is not supported for the GNU toolchain.");
-	}
-
 	let out_dir = env::var("OUT_DIR").unwrap();
 	let src = fs::read_dir("src/dokany/dokan").unwrap()
 		.map(|d| d.unwrap().path())

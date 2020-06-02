@@ -9,16 +9,40 @@ environment:
     secure: bWAI+3DIqfNZT/llXhEGiAsmSzJAmywFVyNgwHaTA5afb24GdHEQid6dRN5VJiTm
   matrix:
     - ARCH: x86_64
+      TOOLCHAIN: msvc
       UPLOAD_DOC: "true"
     - ARCH: x86_64
+      TOOLCHAIN: msvc
       USE_INSTALLED_LIB: "true"
     - ARCH: i686
+      TOOLCHAIN: msvc
     - ARCH: i686
+      TOOLCHAIN: msvc
+      USE_INSTALLED_LIB: "true"
+    - ARCH: x86_64
+      TOOLCHAIN: gnu
+      MSYSTEM: MINGW64
+    - ARCH: x86_64
+      TOOLCHAIN: gnu
+      MSYSTEM: MINGW64
+      USE_INSTALLED_LIB: "true"
+    - ARCH: i686
+      TOOLCHAIN: gnu
+      MSYSTEM: MINGW32
+    - ARCH: i686
+      TOOLCHAIN: gnu
+      MSYSTEM: MINGW32
       USE_INSTALLED_LIB: "true"
 
 install:
+  - ps: |
+      if ($Env:TOOLCHAIN -eq "gnu") {
+          cmd /c 'C:\msys64\usr\bin\bash.exe -l -c "pacman -Syu --noconfirm --noprogressbar" 2>&1'
+          cmd /c 'C:\msys64\usr\bin\bash.exe -l -c "pacman -Syu --needed --noconfirm --noprogressbar $MINGW_PACKAGE_PREFIX-toolchain" 2>&1'
+          $Env:PATH = "C:\msys64\$Env:MSYSTEM\bin;$Env:PATH"
+      }
   - ps: Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile "$Env:TEMP\rustup-init.exe"
-  - cmd: "\"%TEMP%\\rustup-init.exe\" -y --default-host %ARCH%-pc-windows-msvc"
+  - cmd: "\"%TEMP%\\rustup-init.exe\" -y --default-host %ARCH%-pc-windows-%TOOLCHAIN%"
   - ps: $Env:PATH = "$Env:PATH;C:\Users\appveyor\.cargo\bin"
   - ps: |
       if ($Env:USE_INSTALLED_LIB -eq $true) {
