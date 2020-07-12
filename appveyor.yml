@@ -66,7 +66,7 @@ before_build:
       }
 
 build_script:
-  - cmd: cargo test --release --workspace --no-run
+  - cmd: cargo build --release --workspace --all-targets
   - cmd: cargo doc --release --workspace
 
 test_script:
