@@ -95,7 +95,7 @@ pub type PDOKAN_ACCESS_STATE = *mut DOKAN_ACCESS_STATE;
 
 #[repr(C)]
 pub struct DOKAN_IO_SECURITY_CONTEXT {
-	pub AccessSate: DOKAN_ACCESS_STATE,
+	pub AccessState: DOKAN_ACCESS_STATE,
 	pub DesiredAccess: ACCESS_MASK,
 }
 

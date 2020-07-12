@@ -329,7 +329,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		if create_disposition > FILE_MAXIMUM_DISPOSITION {
 			return nt_res(STATUS_INVALID_PARAMETER);
 		}
-		let creator_desc = unsafe { (&*security_context).AccessSate.SecurityDescriptor };
+		let creator_desc = unsafe { (&*security_context).AccessState.SecurityDescriptor };
 		let delete_on_close = create_options & FILE_DELETE_ON_CLOSE > 0;
 		let path_info = self.split_path(file_name)?;
 		if let Some((name, parent)) = path_info {
