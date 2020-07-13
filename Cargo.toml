@@ -1,2 +1,5 @@
 [workspace]
 members = ["dokan-sys", "dokan"]
+
+[profile.release]
+lto = true
