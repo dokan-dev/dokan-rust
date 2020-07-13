@@ -1533,19 +1533,31 @@ extern "stdcall" fn set_allocation_size<'a, 'b: 'a, T: FileSystemHandler<'a, 'b>
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
+// Extern stdcall functions with similar bodies but not called directly with trigger a compiler bug when built in
+// release mode. It seems that extracting the function bodies into a common function works around this bug.
+// See https://github.com/rust-lang/rust/issues/72212
+fn lock_unlock_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
+	file_name: LPCWSTR,
+	byte_offset: LONGLONG,
+	length: LONGLONG,
+	dokan_file_info: PDOKAN_FILE_INFO,
+	func: fn(&'b T, &U16CStr, i64, i64, &OperationInfo<'a, 'b, T>, &'a T::Context) -> Result<(), OperationError>,
+) -> NTSTATUS {
+	panic::catch_unwind(|| unsafe {
+		let file_name = U16CStr::from_ptr_str(file_name);
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
+		func(info.handler(), file_name, byte_offset, length, &info, info.context()).ntstatus()
+	}).unwrap_or(STATUS_INTERNAL_ERROR)
+}
+
 extern "stdcall" fn lock_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	byte_offset: LONGLONG,
 	length: LONGLONG,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
-	panic::catch_unwind(|| unsafe {
-		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		info.handler().lock_file(file_name, byte_offset, length, &info, info.context()).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+	lock_unlock_file(file_name, byte_offset, length, dokan_file_info, T::lock_file)
 }
-
 
 extern "stdcall" fn unlock_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
@@ -1553,11 +1565,7 @@ extern "stdcall" fn unlock_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	length: LONGLONG,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
-	panic::catch_unwind(|| unsafe {
-		let file_name = U16CStr::from_ptr_str(file_name);
-		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		info.handler().unlock_file(file_name, byte_offset, length, &info, info.context()).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+	lock_unlock_file(file_name, byte_offset, length, dokan_file_info, T::unlock_file)
 }
 
 extern "stdcall" fn get_disk_free_space<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1618,18 +1626,23 @@ extern "stdcall" fn get_volume_information<'a, 'b: 'a, T: FileSystemHandler<'a, 
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn mounted<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(dokan_file_info: PDOKAN_FILE_INFO) -> NTSTATUS {
+// Same rationale as lock_unlock_file.
+fn mounted_unmounted<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
+	dokan_file_info: PDOKAN_FILE_INFO,
+	func: fn(&'b T, &OperationInfo<'a, 'b, T>) -> Result<(), OperationError>,
+) -> NTSTATUS {
 	panic::catch_unwind(|| {
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		info.handler().mounted(&info).ntstatus()
+		func(info.handler(), &info).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
+extern "stdcall" fn mounted<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(dokan_file_info: PDOKAN_FILE_INFO) -> NTSTATUS {
+	mounted_unmounted(dokan_file_info, T::mounted)
+}
+
 extern "stdcall" fn unmounted<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(dokan_file_info: PDOKAN_FILE_INFO) -> NTSTATUS {
-	panic::catch_unwind(|| {
-		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		info.handler().unmounted(&info).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+	mounted_unmounted(dokan_file_info, T::unmounted)
 }
 
 extern "stdcall" fn get_file_security<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
