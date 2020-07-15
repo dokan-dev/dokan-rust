@@ -292,7 +292,7 @@ impl MemFsHandler {
 		if path.is_empty() { Ok(None) } else {
 			Self::find_dir_entry(&self.root, &path[..path.len() - 1])
 				.map(|x| Some((*path.iter().last().unwrap(), x)))
-				.ok_or(nt_err(STATUS_OBJECT_NAME_NOT_FOUND))
+				.ok_or(nt_err(STATUS_OBJECT_PATH_NOT_FOUND))
 		}
 	}
 
