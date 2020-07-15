@@ -229,24 +229,25 @@ impl Drop for EntryHandle {
 		// create_file.
 		let parent = self.entry.stat().read().unwrap().parent.upgrade();
 		// Lock parent before checking. This avoids racing with create_file.
-		let parent_children = parent.as_ref().map(|p| p.children.write().unwrap());
+		let parent_children = parent.as_ref()
+			.map(|p| p.children.write().unwrap());
 		let mut stat = self.entry.stat().write().unwrap();
 		if self.delete_on_close {
 			stat.delete_pending = true;
 		}
 		stat.handle_count -= 1;
-		// Ignore root directory.
-		if let Some(mut parent_children) = parent_children {
-			if stat.delete_pending && stat.handle_count == 0 {
-				let key = parent_children.iter().find_map(|(k, v)| {
-					if self.entry.eq(v) {
-						Some(k)
-					} else {
-						None
-					}
-				}).unwrap().clone();
-				parent_children.remove(Borrow::<EntryNameRef>::borrow(&key)).unwrap();
-			}
+		if stat.delete_pending && stat.handle_count == 0 {
+			// The result of upgrade() can be safely unwrapped here because the root directory is the only case when the
+			// reference can be null, which has been handled in delete_directory.
+			let mut parent_children = parent_children.unwrap();
+			let key = parent_children.iter().find_map(|(k, v)| {
+				if self.entry.eq(v) {
+					Some(k)
+				} else {
+					None
+				}
+			}).unwrap().clone();
+			parent_children.remove(Borrow::<EntryNameRef>::borrow(&key)).unwrap();
 		}
 	}
 }
@@ -627,6 +628,10 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 			// Lock children first to avoid race conditions.
 			let children = dir.children.read().unwrap();
 			let mut stat = dir.stat.write().unwrap();
+			if stat.parent.upgrade().is_none() {
+				// Root directory can't be deleted.
+				return nt_res(STATUS_ACCESS_DENIED);
+			}
 			if info.delete_on_close() && !children.is_empty() {
 				nt_res(STATUS_DIRECTORY_NOT_EMPTY)
 			} else {
