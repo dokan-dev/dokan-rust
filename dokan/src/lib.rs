@@ -394,11 +394,11 @@ impl<'a, 'b: 'a, 'c: 'b, T: FileSystemHandler<'b, 'c> + 'c> OperationInfo<'b, 'c
 	}
 
 	fn handler(&'a self) -> &'c T {
-		unsafe { &*(self.mount_options().GlobalContext as *const T) }
+		unsafe { &*(self.mount_options().GlobalContext as *const _) }
 	}
 
 	fn context(&'a self) -> &'b T::Context {
-		unsafe { &*(self.file_info().Context as *const T::Context) }
+		unsafe { &*(self.file_info().Context as *const _) }
 	}
 
 	fn drop_context(&mut self) {
@@ -1356,7 +1356,7 @@ extern "stdcall" fn read_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 		*read_length = 0;
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		let buffer = slice::from_raw_parts_mut(buffer as *mut u8, buffer_length as usize);
+		let buffer = slice::from_raw_parts_mut(buffer as *mut _, buffer_length as usize);
 		let result = info.handler()
 			.read_file(file_name, offset, buffer, &info, info.context());
 		if let Ok(bytes_read) = result {
@@ -1378,7 +1378,7 @@ extern "stdcall" fn write_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 		*number_of_bytes_written = 0;
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		let buffer = slice::from_raw_parts(buffer as *mut u8, number_of_bytes_to_write as usize);
+		let buffer = slice::from_raw_parts(buffer as *mut _, number_of_bytes_to_write as usize);
 		let result = info.handler()
 			.write_file(file_name, offset, buffer, &info, info.context());
 		if let Ok(bytes_written) = result {
@@ -1869,7 +1869,7 @@ impl<'a> Drive<'a> {
 			SetFileSecurity: Some(set_file_security::<'b, 'c, T>),
 			FindStreams: Some(find_streams::<'b, 'c, T>),
 		};
-		self.options.GlobalContext = handler as *const T as u64;
+		self.options.GlobalContext = handler as *const _ as u64;
 		let result = unsafe { DokanMain(&mut self.options, &mut operations) };
 		self.options.GlobalContext = 0;
 		match result {

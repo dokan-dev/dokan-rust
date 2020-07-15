@@ -80,7 +80,7 @@ fn duplicate_acl(acl: winnt::PACL) -> Result<Box<[u8]>, OperationError> {
 		}
 		let len = (size_info.AclBytesInUse + size_info.AclBytesFree) as usize;
 		let mut buf = vec![0u8; len].into_boxed_slice();
-		buf.copy_from_slice(slice::from_raw_parts(acl as *mut u8, len));
+		buf.copy_from_slice(slice::from_raw_parts(acl as *mut _, len));
 		Ok(buf)
 	}
 }

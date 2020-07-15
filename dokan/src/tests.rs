@@ -193,7 +193,7 @@ fn create_test_descriptor() -> Vec<u8> {
 		let mut user_info_buffer = get_current_user_info();
 		let user_info = &*(user_info_buffer.as_mut_ptr() as PTOKEN_USER);
 		let mut abs_desc = mem::zeroed::<SECURITY_DESCRIPTOR>();
-		let abs_desc_ptr = &mut abs_desc as *mut SECURITY_DESCRIPTOR as PSECURITY_DESCRIPTOR;
+		let abs_desc_ptr = &mut abs_desc as *mut _ as PSECURITY_DESCRIPTOR;
 		assert_eq!(InitializeSecurityDescriptor(abs_desc_ptr, SECURITY_DESCRIPTOR_REVISION), TRUE);
 		assert_eq!(SetSecurityDescriptorOwner(abs_desc_ptr, user_info.User.Sid, FALSE), TRUE);
 		let mut rel_desc_len = 0;
@@ -663,7 +663,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 				if desc.len() <= buffer_length as usize {
 					unsafe {
 						desc.as_ptr().copy_to_nonoverlapping(
-							security_descriptor as *mut u8,
+							security_descriptor as *mut _,
 							desc.len(),
 						);
 					}
@@ -819,9 +819,9 @@ fn test_get_disk_free_space() {
 		let mut total_number_of_free_bytes = 0u64;
 		assert_eq!(GetDiskFreeSpaceExW(
 			path.as_ptr(),
-			&mut free_bytes_available as *mut u64 as PULARGE_INTEGER,
-			&mut total_number_of_bytes as *mut u64 as PULARGE_INTEGER,
-			&mut total_number_of_free_bytes as *mut u64 as PULARGE_INTEGER,
+			&mut free_bytes_available as *mut _ as PULARGE_INTEGER,
+			&mut total_number_of_bytes as *mut _ as PULARGE_INTEGER,
+			&mut total_number_of_free_bytes as *mut _ as PULARGE_INTEGER,
 		), TRUE);
 		assert_eq!(free_bytes_available, 512 * 1024);
 		assert_eq!(total_number_of_bytes, 2 * 1024 * 1024);
@@ -1101,13 +1101,13 @@ fn test_find_streams() {
 		let hf = FindFirstStreamW(
 			path.as_ptr(),
 			FindStreamInfoStandard,
-			&mut data as *mut WIN32_FIND_STREAM_DATA as LPVOID,
+			&mut data as *mut _ as LPVOID,
 			0,
 		);
 		assert_ne!(hf, INVALID_HANDLE_VALUE);
 		assert_eq!(data.StreamSize.QuadPart(), &42);
 		assert_eq!(U16CStr::from_slice_with_nul(&data.cStreamName).unwrap(), convert_str("::$DATA").as_ref());
-		assert_eq!(FindNextStreamW(hf, &mut data as *mut WIN32_FIND_STREAM_DATA as LPVOID), FALSE);
+		assert_eq!(FindNextStreamW(hf, &mut data as *mut _ as LPVOID), FALSE);
 		assert_eq!(GetLastError(), ERROR_HANDLE_EOF);
 		assert_eq!(FindClose(hf), TRUE);
 	});

@@ -79,7 +79,7 @@ impl PartialEq for EntryNameRef {
 
 impl EntryNameRef {
 	fn new(s: &U16Str) -> &Self {
-		unsafe { &*(s as *const U16Str as *const Self) }
+		unsafe { &*(s as *const _ as *const Self) }
 	}
 }
 
