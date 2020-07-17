@@ -278,6 +278,7 @@ impl Drop for EntryHandle {
 		if stat.delete_pending && stat.handle_count == 0 {
 			// The result of upgrade() can be safely unwrapped here because the root directory is the only case when the
 			// reference can be null, which has been handled in delete_directory.
+			parent.as_ref().unwrap().stat.write().unwrap().mtime = SystemTime::now();
 			let mut parent_children = parent_children.unwrap();
 			let key = parent_children.iter().find_map(|(k, v)| {
 				if &self.entry == v { Some(k) } else { None }
@@ -288,6 +289,7 @@ impl Drop for EntryHandle {
 			stat.delete_pending = false
 		}
 		if let Some(stream) = &self.alt_stream {
+			stat.mtime = SystemTime::now();
 			let mut stream_locked = stream.write().unwrap();
 			stream_locked.handle_count -= 1;
 			if stream_locked.delete_pending && stream_locked.handle_count == 0 {
@@ -424,7 +426,10 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 					if stream_info.check_default(entry.is_dir())? { None } else {
 						let mut stat = entry.stat().write().unwrap();
 						let stream_name = EntryNameRef::new(stream_info.name);
-						if let Some(stream) = stat.alt_streams.get(stream_name) {
+						if let Some(stream) = stat.alt_streams
+							.get(stream_name)
+							.map(|s| Arc::clone(s))
+						{
 							if stream.read().unwrap().delete_pending {
 								return nt_res(STATUS_ACCESS_DENIED);
 							}
@@ -433,12 +438,13 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 									if is_readonly {
 										return nt_res(STATUS_ACCESS_DENIED);
 									}
+									stat.mtime = SystemTime::now();
 									stream.write().unwrap().data.clear();
 								}
 								FILE_CREATE => return nt_res(STATUS_OBJECT_NAME_COLLISION),
 								_ => (),
 							}
-							Some((Arc::clone(stream), false))
+							Some((stream, false))
 						} else {
 							if create_disposition == FILE_OPEN || create_disposition == FILE_OVERWRITE {
 								return nt_res(STATUS_OBJECT_NAME_NOT_FOUND);
@@ -447,6 +453,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 								return nt_res(STATUS_ACCESS_DENIED);
 							}
 							let stream = Arc::new(RwLock::new(AltStream::new()));
+							stat.mtime = SystemTime::now();
 							assert!(stat.alt_streams
 								.insert(EntryName(stream_info.name.to_owned()), Arc::clone(&stream))
 								.is_none());
@@ -489,6 +496,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 								if is_readonly {
 									return nt_res(STATUS_ACCESS_DENIED);
 								}
+								file.stat.write().unwrap().mtime = SystemTime::now();
 								file.data.write().unwrap().clear();
 							}
 							FILE_CREATE => return nt_res(STATUS_OBJECT_NAME_COLLISION),
@@ -604,13 +612,17 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 			data[offset..offset + len].copy_from_slice(buffer);
 			len as u32
 		};
-		if let Some(stream) = &context.alt_stream {
+		let ret = if let Some(stream) = &context.alt_stream {
 			Ok(do_write(&mut stream.write().unwrap().data))
 		} else if let Entry::File(file) = &context.entry {
 			Ok(do_write(&mut file.data.write().unwrap()))
 		} else {
 			nt_res(STATUS_ACCESS_DENIED)
+		};
+		if ret.is_ok() {
+			context.entry.stat().write().unwrap().mtime = SystemTime::now();
 		}
+		ret
 	}
 
 	fn flush_file_buffers(
@@ -794,6 +806,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 			src_children.remove(EntryNameRef::new(src_name)).unwrap();
 			context.entry.stat().write().unwrap().parent = Arc::downgrade(&dst_parent);
 		}
+		let now = SystemTime::now();
+		src_parent.stat.write().unwrap().mtime = now;
+		dst_parent.stat.write().unwrap().mtime = now;
 		Ok(())
 	}
 
@@ -804,7 +819,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		_info: &OperationInfo<'a, 'b, Self>,
 		context: &'a Self::Context,
 	) -> Result<(), OperationError> {
-		if let Some(stream) = &context.alt_stream {
+		let ret = if let Some(stream) = &context.alt_stream {
 			stream.write().unwrap().data.resize(offset as usize, 0);
 			Ok(())
 		} else if let Entry::File(file) = &context.entry {
@@ -812,7 +827,11 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 			Ok(())
 		} else {
 			nt_res(STATUS_INVALID_DEVICE_REQUEST)
+		};
+		if ret.is_ok() {
+			context.entry.stat().write().unwrap().mtime = SystemTime::now();
 		}
+		ret
 	}
 
 	fn set_allocation_size(
@@ -835,7 +854,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 				data.reserve(alloc_size - cap);
 			}
 		};
-		if let Some(stream) = &context.alt_stream {
+		let ret = if let Some(stream) = &context.alt_stream {
 			set_alloc(&mut stream.write().unwrap().data);
 			Ok(())
 		} else if let Entry::File(file) = &context.entry {
@@ -843,7 +862,11 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 			Ok(())
 		} else {
 			nt_res(STATUS_INVALID_DEVICE_REQUEST)
+		};
+		if ret.is_ok() {
+			context.entry.stat().write().unwrap().mtime = SystemTime::now();
 		}
+		ret
 	}
 
 	fn get_disk_free_space(
@@ -856,7 +879,6 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 			available_byte_count: 512 * 1024 * 1024,
 		})
 	}
-
 
 	fn get_volume_information(
 		&'b self,
