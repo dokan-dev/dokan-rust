@@ -320,7 +320,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		&'b self,
 		file_name: &U16CStr,
 		security_context: PDOKAN_IO_SECURITY_CONTEXT,
-		_desired_access: winnt::ACCESS_MASK,
+		desired_access: winnt::ACCESS_MASK,
 		file_attributes: u32,
 		_share_access: u32,
 		create_disposition: u32,
@@ -341,7 +341,8 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 						return nt_res(STATUS_NOT_A_DIRECTORY);
 					}
 					let stat = file.stat.read().unwrap();
-					if stat.attrs & winnt::FILE_ATTRIBUTE_READONLY > 0 || stat.delete_pending {
+					if stat.attrs & winnt::FILE_ATTRIBUTE_READONLY > 0 && desired_access & winnt::FILE_GENERIC_WRITE > 0
+						|| stat.delete_pending {
 						return nt_res(STATUS_ACCESS_DENIED);
 					}
 					std::mem::drop(stat);
