@@ -905,8 +905,11 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		_info: &OperationInfo<'a, 'b, Self>,
 		context: &'a Self::Context,
 	) -> Result<u32, OperationError> {
-		context.entry.stat().read().unwrap().sec_desc
-			.get_security_info(security_information, security_descriptor, buffer_length)
+		context.entry.stat().read().unwrap().sec_desc.get_security_info(
+			security_information,
+			security_descriptor,
+			buffer_length,
+		)
 	}
 
 	fn set_file_security(
@@ -918,7 +921,10 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		_info: &OperationInfo<'a, 'b, Self>,
 		context: &'a Self::Context,
 	) -> Result<(), OperationError> {
-		context.entry.stat().write().unwrap().sec_desc.set_security_info(security_information, security_descriptor)
+		context.entry.stat().write().unwrap().sec_desc.set_security_info(
+			security_information,
+			security_descriptor,
+		)
 	}
 
 	fn find_streams(
