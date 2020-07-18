@@ -271,7 +271,7 @@ impl Drop for EntryHandle {
 		let parent_children = parent.as_ref()
 			.map(|p| p.children.write().unwrap());
 		let mut stat = self.entry.stat().write().unwrap();
-		if self.delete_on_close {
+		if self.delete_on_close && self.alt_stream.is_none() {
 			stat.delete_pending = true;
 		}
 		stat.handle_count -= 1;
@@ -291,6 +291,9 @@ impl Drop for EntryHandle {
 		if let Some(stream) = &self.alt_stream {
 			stat.mtime = SystemTime::now();
 			let mut stream_locked = stream.write().unwrap();
+			if self.delete_on_close {
+				stream_locked.delete_pending = true;
+			}
 			stream_locked.handle_count -= 1;
 			if stream_locked.delete_pending && stream_locked.handle_count == 0 {
 				let key = stat.alt_streams.iter().find_map(|(k, v)| {
