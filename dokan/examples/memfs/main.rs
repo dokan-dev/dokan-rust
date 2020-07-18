@@ -441,6 +441,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 									if is_readonly {
 										return nt_res(STATUS_ACCESS_DENIED);
 									}
+									stat.attrs.value |= winnt::FILE_ATTRIBUTE_ARCHIVE;
 									stat.mtime = SystemTime::now();
 									stream.write().unwrap().data.clear();
 								}
@@ -486,7 +487,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 								let id = stat.id;
 								*stat = Stat::new(
 									id,
-									file_attributes,
+									file_attributes | winnt::FILE_ATTRIBUTE_ARCHIVE,
 									SecurityDescriptor::new_inherited(
 										&parent.stat.read().unwrap().sec_desc,
 										creator_desc, token.as_raw_handle(), false,
@@ -499,7 +500,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 								if is_readonly {
 									return nt_res(STATUS_ACCESS_DENIED);
 								}
-								file.stat.write().unwrap().mtime = SystemTime::now();
+								let mut stat = file.stat.write().unwrap();
+								stat.attrs.value |= winnt::FILE_ATTRIBUTE_ARCHIVE;
+								stat.mtime = SystemTime::now();
 								file.data.write().unwrap().clear();
 							}
 							FILE_CREATE => return nt_res(STATUS_OBJECT_NAME_COLLISION),
@@ -549,8 +552,8 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 						nt_res(STATUS_OBJECT_NAME_NOT_FOUND)
 					} else {
 						self.create_new(
-							&name, file_attributes, delete_on_close, creator_desc, token.as_raw_handle(),
-							&parent, &mut children, false,
+							&name, file_attributes | winnt::FILE_ATTRIBUTE_ARCHIVE, delete_on_close, creator_desc,
+							token.as_raw_handle(), &parent, &mut children, false,
 						)
 					}
 				}
@@ -623,7 +626,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 			nt_res(STATUS_ACCESS_DENIED)
 		};
 		if ret.is_ok() {
-			context.entry.stat().write().unwrap().mtime = SystemTime::now();
+			let mut stat = context.entry.stat().write().unwrap();
+			stat.attrs.value |= winnt::FILE_ATTRIBUTE_ARCHIVE;
+			stat.mtime = SystemTime::now();
 		}
 		ret
 	}
