@@ -834,7 +834,7 @@ pub trait FileSystemHandler<'a, 'b: 'a>: Sync + Sized + 'b {
 	fn create_file(
 		&'b self,
 		_file_name: &U16CStr,
-		_security_context: PDOKAN_IO_SECURITY_CONTEXT,
+		_security_context: &DOKAN_IO_SECURITY_CONTEXT,
 		_desired_access: ACCESS_MASK,
 		_file_attributes: u32,
 		_share_access: u32,
@@ -1297,7 +1297,7 @@ extern "stdcall" fn create_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 		info.drop_context();
 		info.handler().create_file(
 			file_name,
-			security_context,
+			&*security_context,
 			desired_access,
 			file_attributes,
 			share_access,

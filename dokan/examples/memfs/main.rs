@@ -405,7 +405,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 	fn create_file(
 		&'b self,
 		file_name: &U16CStr,
-		security_context: PDOKAN_IO_SECURITY_CONTEXT,
+		security_context: &DOKAN_IO_SECURITY_CONTEXT,
 		desired_access: winnt::ACCESS_MASK,
 		file_attributes: u32,
 		_share_access: u32,
@@ -416,7 +416,6 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		if create_disposition > FILE_MAXIMUM_DISPOSITION {
 			return nt_res(STATUS_INVALID_PARAMETER);
 		}
-		let creator_desc = unsafe { (&*security_context).AccessState.SecurityDescriptor };
 		let delete_on_close = create_options & FILE_DELETE_ON_CLOSE > 0;
 		let path_info = path::split_path(&self.root, file_name)?;
 		if let Some((name, parent)) = path_info {
@@ -535,8 +534,14 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 					match create_disposition {
 						FILE_CREATE | FILE_OPEN_IF => {
 							self.create_new(
-								&name, file_attributes, delete_on_close, creator_desc, token.as_raw_handle(),
-								&parent, &mut children, true,
+								&name,
+								file_attributes,
+								delete_on_close,
+								security_context.AccessState.SecurityDescriptor,
+								token.as_raw_handle(),
+								&parent,
+								&mut children,
+								true,
 							)
 						}
 						FILE_OPEN => nt_res(STATUS_OBJECT_NAME_NOT_FOUND),
@@ -547,8 +552,14 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 						nt_res(STATUS_OBJECT_NAME_NOT_FOUND)
 					} else {
 						self.create_new(
-							&name, file_attributes | winnt::FILE_ATTRIBUTE_ARCHIVE, delete_on_close, creator_desc,
-							token.as_raw_handle(), &parent, &mut children, false,
+							&name,
+							file_attributes | winnt::FILE_ATTRIBUTE_ARCHIVE,
+							delete_on_close,
+							security_context.AccessState.SecurityDescriptor,
+							token.as_raw_handle(),
+							&parent,
+							&mut children,
+							false,
 						)
 					}
 				}

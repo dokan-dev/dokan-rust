@@ -216,7 +216,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	fn create_file(
 		&'b self,
 		file_name: &U16CStr,
-		_security_context: PDOKAN_IO_SECURITY_CONTEXT,
+		_security_context: &DOKAN_IO_SECURITY_CONTEXT,
 		desired_access: u32,
 		file_attributes: u32,
 		share_access: u32,
