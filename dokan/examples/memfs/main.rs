@@ -464,9 +464,11 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 						file_attributes & winnt::FILE_ATTRIBUTE_SYSTEM > 0);
 				if is_readonly &&
 					(desired_access & winnt::FILE_WRITE_DATA > 0 ||
-						desired_access & winnt::FILE_APPEND_DATA > 0) ||
-					stat.delete_pending {
+						desired_access & winnt::FILE_APPEND_DATA > 0) {
 					return nt_res(STATUS_ACCESS_DENIED);
+				}
+				if stat.delete_pending {
+					return nt_res(STATUS_DELETE_PENDING);
 				}
 				if is_readonly && delete_on_close {
 					return nt_res(STATUS_CANNOT_DELETE);
@@ -481,7 +483,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 							.map(|s| Arc::clone(s))
 						{
 							if stream.read().unwrap().delete_pending {
-								return nt_res(STATUS_ACCESS_DENIED);
+								return nt_res(STATUS_DELETE_PENDING);
 							}
 							match create_disposition {
 								FILE_SUPERSEDE | FILE_OVERWRITE | FILE_OVERWRITE_IF => {
@@ -562,7 +564,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 				}
 			} else {
 				if parent.stat.read().unwrap().delete_pending {
-					return nt_res(STATUS_ACCESS_DENIED);
+					return nt_res(STATUS_DELETE_PENDING);
 				}
 				let token = info.requester_token().unwrap();
 				if create_options & FILE_DIRECTORY_FILE > 0 {
