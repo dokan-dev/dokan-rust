@@ -8,6 +8,9 @@ use winapi::shared::ntstatus::*;
 use crate::{DirEntry, Entry, EntryName, EntryNameRef};
 use crate::err_utils::*;
 
+// Use the same value as NTFS.
+pub const MAX_COMPONENT_LENGTH: u32 = 255;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum StreamType {
 	Data,
@@ -91,16 +94,17 @@ impl<'a> FullName<'a> {
 	}
 }
 
-fn find_dir_entry(cur_entry: &Arc<DirEntry>, path: &[&U16Str]) -> Option<Arc<DirEntry>> {
+fn find_dir_entry(cur_entry: &Arc<DirEntry>, path: &[&U16Str]) -> Result<Arc<DirEntry>, OperationError> {
 	if let Some(name) = path.get(0) {
+		if name.len() > MAX_COMPONENT_LENGTH as usize {
+			return nt_res(STATUS_OBJECT_NAME_INVALID);
+		}
 		match cur_entry.children.read().unwrap().get(EntryNameRef::new(name)) {
-			Some(Entry::Directory(dir)) => {
-				find_dir_entry(dir, &path[1..])
-			}
-			_ => None
+			Some(Entry::Directory(dir)) => find_dir_entry(dir, &path[1..]),
+			_ => nt_res(STATUS_OBJECT_PATH_NOT_FOUND)
 		}
 	} else {
-		Some(Arc::clone(cur_entry))
+		Ok(Arc::clone(cur_entry))
 	}
 }
 
@@ -114,9 +118,13 @@ pub fn split_path<'a>(
 		.map(|s| U16Str::from_slice(s))
 		.collect::<Vec<_>>();
 	if path.is_empty() { Ok(None) } else {
-		let name = FullName::new(*path.iter().last().unwrap())?;
-		find_dir_entry(root, &path[..path.len() - 1])
-			.map(|x| Some((name, x)))
-			.ok_or(nt_err(STATUS_OBJECT_PATH_NOT_FOUND))
+		let name = *path.iter().last().unwrap();
+		if name.len() > MAX_COMPONENT_LENGTH as usize {
+			return nt_res(STATUS_OBJECT_NAME_INVALID);
+		}
+		Ok(Some((
+			FullName::new(name)?,
+			find_dir_entry(root, &path[..path.len() - 1])?
+		)))
 	}
 }

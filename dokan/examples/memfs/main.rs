@@ -887,8 +887,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		Ok(VolumeInfo {
 			name: U16CString::from_str("dokan-rust memfs").unwrap(),
 			serial_number: 0,
-			// Use the same value as NTFS.
-			max_component_length: 255,
+			max_component_length: path::MAX_COMPONENT_LENGTH,
 			fs_flags: winnt::FILE_CASE_PRESERVED_NAMES | winnt::FILE_CASE_SENSITIVE_SEARCH | winnt::FILE_UNICODE_ON_DISK
 				| winnt::FILE_PERSISTENT_ACLS | winnt::FILE_NAMED_STREAMS,
 			// Custom names don't play well with UAC.
