@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::collections::hash_map;
 use std::hash::{Hash, Hasher};
 use std::os::windows::io::AsRawHandle;
-use std::sync::{Arc, RwLock, Weak};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use dokan::*;
@@ -73,6 +73,7 @@ struct Stat {
 	attrs: Attributes,
 	ctime: SystemTime,
 	mtime: SystemTime,
+	atime: SystemTime,
 	sec_desc: SecurityDescriptor,
 	handle_count: u32,
 	delete_pending: bool,
@@ -88,12 +89,22 @@ impl Stat {
 			attrs: Attributes::new(attrs),
 			ctime: now,
 			mtime: now,
+			atime: now,
 			sec_desc,
 			handle_count: 0,
 			delete_pending: false,
 			parent,
 			alt_streams: HashMap::new(),
 		}
+	}
+
+	fn update_atime(&mut self, atime: SystemTime) {
+		self.atime = atime;
+	}
+
+	fn update_mtime(&mut self, mtime: SystemTime) {
+		self.update_atime(mtime);
+		self.mtime = mtime;
 	}
 }
 
@@ -242,6 +253,11 @@ struct EntryHandle {
 	entry: Entry,
 	alt_stream: Option<Arc<RwLock<AltStream>>>,
 	delete_on_close: bool,
+	mtime_delayed: Mutex<Option<SystemTime>>,
+	atime_delayed: Mutex<Option<SystemTime>>,
+	ctime_enabled: AtomicBool,
+	mtime_enabled: AtomicBool,
+	atime_enabled: AtomicBool,
 }
 
 impl EntryHandle {
@@ -254,11 +270,29 @@ impl EntryHandle {
 			entry,
 			alt_stream,
 			delete_on_close,
+			mtime_delayed: Mutex::new(None),
+			atime_delayed: Mutex::new(None),
+			ctime_enabled: AtomicBool::new(true),
+			mtime_enabled: AtomicBool::new(true),
+			atime_enabled: AtomicBool::new(true),
 		}
 	}
 
 	fn is_dir(&self) -> bool {
 		if self.alt_stream.is_some() { false } else { self.entry.is_dir() }
+	}
+
+	fn update_atime(&self, stat: &mut Stat, atime: SystemTime) {
+		if self.atime_enabled.load(Ordering::Relaxed) {
+			stat.atime = atime;
+		}
+	}
+
+	fn update_mtime(&self, stat: &mut Stat, mtime: SystemTime) {
+		self.update_atime(stat, mtime);
+		if self.mtime_enabled.load(Ordering::Relaxed) {
+			stat.mtime = mtime;
+		}
 	}
 }
 
@@ -278,7 +312,7 @@ impl Drop for EntryHandle {
 		if stat.delete_pending && stat.handle_count == 0 {
 			// The result of upgrade() can be safely unwrapped here because the root directory is the only case when the
 			// reference can be null, which has been handled in delete_directory.
-			parent.as_ref().unwrap().stat.write().unwrap().mtime = SystemTime::now();
+			parent.as_ref().unwrap().stat.write().unwrap().update_mtime(SystemTime::now());
 			let mut parent_children = parent_children.unwrap();
 			let key = parent_children.iter().find_map(|(k, v)| {
 				if &self.entry == v { Some(k) } else { None }
@@ -300,6 +334,7 @@ impl Drop for EntryHandle {
 					if Arc::ptr_eq(stream, v) { Some(k) } else { None }
 				}).unwrap().clone();
 				stat.alt_streams.remove(Borrow::<EntryNameRef>::borrow(&key)).unwrap();
+				self.update_atime(&mut stat, SystemTime::now());
 			}
 		}
 	}
@@ -367,7 +402,7 @@ impl MemFsHandler {
 		assert!(children
 			.insert(EntryName(name.file_name.to_owned()), entry.clone())
 			.is_none());
-		parent.stat.write().unwrap().mtime = SystemTime::now();
+		parent.stat.write().unwrap().update_mtime(SystemTime::now());
 		let is_dir = is_dir && stream.is_some();
 		Ok(CreateFileInfo {
 			context: EntryHandle::new(entry, stream, delete_on_close),
@@ -454,7 +489,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 										return nt_res(STATUS_ACCESS_DENIED);
 									}
 									stat.attrs.value |= winnt::FILE_ATTRIBUTE_ARCHIVE;
-									stat.mtime = SystemTime::now();
+									stat.update_mtime(SystemTime::now());
 									stream.write().unwrap().data.clear();
 								}
 								FILE_CREATE => return nt_res(STATUS_OBJECT_NAME_COLLISION),
@@ -469,7 +504,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 								return nt_res(STATUS_ACCESS_DENIED);
 							}
 							let stream = Arc::new(RwLock::new(AltStream::new()));
-							stat.mtime = SystemTime::now();
+							stat.update_atime(SystemTime::now());
 							assert!(stat.alt_streams
 								.insert(EntryName(stream_info.name.to_owned()), Arc::clone(&stream))
 								.is_none());
@@ -497,7 +532,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 								file.data.write().unwrap().clear();
 								let mut stat = file.stat.write().unwrap();
 								stat.attrs = Attributes::new(file_attributes | winnt::FILE_ATTRIBUTE_ARCHIVE);
-								stat.mtime = SystemTime::now();
+								stat.update_mtime(SystemTime::now());
 							}
 							FILE_CREATE => return nt_res(STATUS_OBJECT_NAME_COLLISION),
 							_ => (),
@@ -584,6 +619,25 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		}
 	}
 
+	fn close_file(
+		&'b self,
+		_file_name: &U16CStr,
+		_info: &OperationInfo<'a, 'b, Self>,
+		context: &'a Self::Context,
+	) {
+		let mut stat = context.entry.stat().write().unwrap();
+		if let Some(mtime) = context.mtime_delayed.lock().unwrap().clone() {
+			if mtime > stat.mtime {
+				stat.mtime = mtime;
+			}
+		}
+		if let Some(atime) = context.atime_delayed.lock().unwrap().clone() {
+			if atime > stat.atime {
+				stat.atime = atime;
+			}
+		}
+	}
+
 	fn read_file(
 		&'b self,
 		_file_name: &U16CStr,
@@ -632,9 +686,14 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 			nt_res(STATUS_ACCESS_DENIED)
 		};
 		if ret.is_ok() {
-			let mut stat = context.entry.stat().write().unwrap();
-			stat.attrs.value |= winnt::FILE_ATTRIBUTE_ARCHIVE;
-			stat.mtime = SystemTime::now();
+			context.entry.stat().write().unwrap().attrs.value |= winnt::FILE_ATTRIBUTE_ARCHIVE;
+			let now = SystemTime::now();
+			if context.mtime_enabled.load(Ordering::Relaxed) {
+				*context.mtime_delayed.lock().unwrap() = Some(now);
+			}
+			if context.atime_enabled.load(Ordering::Relaxed) {
+				*context.atime_delayed.lock().unwrap() = Some(now);
+			}
 		}
 		ret
 	}
@@ -658,7 +717,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		Ok(FileInfo {
 			attributes: stat.attrs.get_output_attrs(context.is_dir()),
 			creation_time: stat.ctime,
-			last_access_time: stat.mtime,
+			last_access_time: stat.atime,
 			last_write_time: stat.mtime,
 			file_size: if let Some(stream) = &context.alt_stream {
 				stream.read().unwrap().data.len() as u64
@@ -690,7 +749,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 				let res = fill_find_data(&FindData {
 					attributes: stat.attrs.get_output_attrs(v.is_dir()),
 					creation_time: stat.ctime,
-					last_access_time: stat.mtime,
+					last_access_time: stat.atime,
 					last_write_time: stat.mtime,
 					file_size: match v {
 						Entry::File(file) => file.data.read().unwrap().len() as u64,
@@ -713,22 +772,36 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		_info: &OperationInfo<'a, 'b, Self>,
 		context: &'a Self::Context,
 	) -> Result<(), OperationError> {
-		context.entry.stat().write().unwrap().attrs = Attributes::new(file_attributes);
+		let mut stat = context.entry.stat().write().unwrap();
+		stat.attrs = Attributes::new(file_attributes);
+		context.update_atime(&mut stat, SystemTime::now());
 		Ok(())
 	}
 
 	fn set_file_time(
 		&'b self,
 		_file_name: &U16CStr,
-		creation_time: SystemTime,
-		_last_access_time: SystemTime,
-		last_write_time: SystemTime,
+		creation_time: FileTimeInfo,
+		last_access_time: FileTimeInfo,
+		last_write_time: FileTimeInfo,
 		_info: &OperationInfo<'a, 'b, Self>,
 		context: &'a Self::Context,
 	) -> Result<(), OperationError> {
 		let mut stat = context.entry.stat().write().unwrap();
-		stat.ctime = creation_time;
-		stat.mtime = last_write_time;
+		let process_time_info = |time_info: &FileTimeInfo, time: &mut SystemTime, flag: &AtomicBool| {
+			match time_info {
+				FileTimeInfo::SetTime(new_time) =>
+					if flag.load(Ordering::Relaxed) {
+						*time = *new_time
+					},
+				FileTimeInfo::DisableUpdate => flag.store(false, Ordering::Relaxed),
+				FileTimeInfo::ResumeUpdate => flag.store(true, Ordering::Relaxed),
+				FileTimeInfo::DontChange => (),
+			}
+		};
+		process_time_info(&creation_time, &mut stat.ctime, &context.ctime_enabled);
+		process_time_info(&last_write_time, &mut stat.mtime, &context.mtime_enabled);
+		process_time_info(&last_access_time, &mut stat.atime, &context.atime_enabled);
 		Ok(())
 	}
 
@@ -799,10 +872,13 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		if dst_name.stream_info.is_some() {
 			return nt_res(STATUS_OBJECT_NAME_INVALID);
 		}
+		let now = SystemTime::now();
 		if Arc::ptr_eq(&src_parent, &dst_parent) {
 			let mut children = src_parent.children.write().unwrap();
 			children.remove(EntryNameRef::new(src_name)).unwrap();
 			assert_eq!(children.insert(EntryName(dst_name.file_name.to_owned()), context.entry.clone()), None);
+			src_parent.stat.write().unwrap().update_mtime(now);
+			context.update_atime(&mut context.entry.stat().write().unwrap(), now);
 		} else {
 			let mut src_children = src_parent.children.write().unwrap();
 			let mut dst_children = dst_parent.children.write().unwrap();
@@ -821,11 +897,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 				}
 			}
 			src_children.remove(EntryNameRef::new(src_name)).unwrap();
-			context.entry.stat().write().unwrap().parent = Arc::downgrade(&dst_parent);
+			src_parent.stat.write().unwrap().update_mtime(now);
+			dst_parent.stat.write().unwrap().update_mtime(now);
+			let mut stat = context.entry.stat().write().unwrap();
+			stat.parent = Arc::downgrade(&dst_parent);
+			context.update_atime(&mut stat, now);
 		}
-		let now = SystemTime::now();
-		src_parent.stat.write().unwrap().mtime = now;
-		dst_parent.stat.write().unwrap().mtime = now;
 		Ok(())
 	}
 
@@ -846,7 +923,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 			nt_res(STATUS_INVALID_DEVICE_REQUEST)
 		};
 		if ret.is_ok() {
-			context.entry.stat().write().unwrap().mtime = SystemTime::now();
+			context.update_mtime(&mut context.entry.stat().write().unwrap(), SystemTime::now());
 		}
 		ret
 	}
@@ -881,7 +958,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 			nt_res(STATUS_INVALID_DEVICE_REQUEST)
 		};
 		if ret.is_ok() {
-			context.entry.stat().write().unwrap().mtime = SystemTime::now();
+			context.update_mtime(&mut context.entry.stat().write().unwrap(), SystemTime::now());
 		}
 		ret
 	}
@@ -937,10 +1014,15 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		_info: &OperationInfo<'a, 'b, Self>,
 		context: &'a Self::Context,
 	) -> Result<(), OperationError> {
-		context.entry.stat().write().unwrap().sec_desc.set_security_info(
+		let mut stat = context.entry.stat().write().unwrap();
+		let ret = stat.sec_desc.set_security_info(
 			security_information,
 			security_descriptor,
-		)
+		);
+		if ret.is_ok() {
+			context.update_atime(&mut stat, SystemTime::now());
+		}
+		ret
 	}
 
 	fn find_streams(

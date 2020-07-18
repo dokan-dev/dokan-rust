@@ -120,7 +120,7 @@ enum HandlerSignal {
 	FlushFileBuffers,
 	FindFilesWithPattern(U16CString),
 	SetFileAttributes(u32),
-	SetFileTime(SystemTime, SystemTime, SystemTime),
+	SetFileTime(FileTimeInfo, FileTimeInfo, FileTimeInfo),
 	DeleteFile(bool),
 	DeleteDirectory(bool),
 	MoveFile(U16CString, bool),
@@ -476,9 +476,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	fn set_file_time(
 		&'b self,
 		file_name: &U16CStr,
-		creation_time: SystemTime,
-		last_access_time: SystemTime,
-		last_write_time: SystemTime,
+		creation_time: FileTimeInfo,
+		last_access_time: FileTimeInfo,
+		last_write_time: FileTimeInfo,
 		info: &OperationInfo<'a, 'b, Self>,
 		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
@@ -972,7 +972,20 @@ fn test_set_file_time() {
 		let atime = UNIX_EPOCH + Duration::from_secs(1);
 		let mtime = UNIX_EPOCH + Duration::from_secs(2);
 		assert_eq!(SetFileTime(hf, &ctime.to_filetime(), &atime.to_filetime(), &mtime.to_filetime()), TRUE);
-		assert_eq!(rx.recv().unwrap(), HandlerSignal::SetFileTime(ctime, atime, mtime));
+		assert_eq!(rx.recv().unwrap(), HandlerSignal::SetFileTime(
+			FileTimeInfo::SetTime(ctime),
+			FileTimeInfo::SetTime(atime),
+			FileTimeInfo::SetTime(mtime),
+		));
+		let time_dont_change = mem::transmute(0i64);
+		let time_disable_update = mem::transmute(-1i64);
+		let time_resume_update = mem::transmute(-2i64);
+		assert_eq!(SetFileTime(hf, &time_dont_change, &time_disable_update, &time_resume_update), TRUE);
+		assert_eq!(rx.recv().unwrap(), HandlerSignal::SetFileTime(
+			FileTimeInfo::DontChange,
+			FileTimeInfo::DisableUpdate,
+			FileTimeInfo::ResumeUpdate,
+		));
 		assert_eq!(CloseHandle(hf), TRUE);
 	});
 }

@@ -554,22 +554,47 @@ impl<T> OperationResultExt for Result<T, OperationError> {
 
 const FILETIME_OFFSET: Duration = Duration::from_secs(11644473600);
 
-trait FileTimeExt {
-	fn from_filetime(time: FILETIME) -> SystemTime;
+trait ToFileTime {
 	fn to_filetime(&self) -> FILETIME;
 }
 
-impl FileTimeExt for SystemTime {
-	fn from_filetime(time: FILETIME) -> SystemTime {
-		let nanos = (time.dwLowDateTime as u64 + ((time.dwHighDateTime as u64) << 32)) * 100;
-		UNIX_EPOCH - FILETIME_OFFSET + Duration::from_nanos(nanos)
-	}
+impl ToFileTime for SystemTime {
 	fn to_filetime(&self) -> FILETIME {
 		let intervals = self.duration_since(UNIX_EPOCH - FILETIME_OFFSET)
 			.unwrap_or(Duration::from_secs(0)).as_nanos() / 100;
 		FILETIME {
 			dwLowDateTime: intervals as u32,
 			dwHighDateTime: (intervals >> 32) as u32,
+		}
+	}
+}
+
+/// The operation to perform on a file's corresponding time information.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum FileTimeInfo {
+	/// Set corresponding time information of the file.
+	SetTime(SystemTime),
+	/// Don't change corresponding time information of the file.
+	DontChange,
+	/// Disable update of corresponding time information caused by further operations on the file handle.
+	DisableUpdate,
+	/// Resume update of corresponding time information caused by further operations on the file handle.
+	ResumeUpdate,
+}
+
+impl FileTimeInfo {
+	fn from_filetime(time: FILETIME) -> Self {
+		unsafe {
+			let time_val = mem::transmute_copy::<_, i64>(&time);
+			match time_val {
+				0 => FileTimeInfo::DontChange,
+				-1 => FileTimeInfo::DisableUpdate,
+				-2 => FileTimeInfo::ResumeUpdate,
+				_ => {
+					let nanos = (time.dwLowDateTime as u64 + ((time.dwHighDateTime as u64) << 32)) * 100;
+					FileTimeInfo::SetTime(UNIX_EPOCH - FILETIME_OFFSET + Duration::from_nanos(nanos))
+				}
+			}
 		}
 	}
 }
@@ -1022,9 +1047,9 @@ pub trait FileSystemHandler<'a, 'b: 'a>: Sync + Sized + 'b {
 	fn set_file_time(
 		&'b self,
 		_file_name: &U16CStr,
-		_creation_time: SystemTime,
-		_last_access_time: SystemTime,
-		_last_write_time: SystemTime,
+		_creation_time: FileTimeInfo,
+		_last_access_time: FileTimeInfo,
+		_last_write_time: FileTimeInfo,
 		_info: &OperationInfo<'a, 'b, Self>,
 		_context: &'a Self::Context,
 	) -> Result<(), OperationError> {
@@ -1466,9 +1491,9 @@ extern "stdcall" fn set_file_time<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		let creation_time = SystemTime::from_filetime(*creation_time);
-		let last_access_time = SystemTime::from_filetime(*last_access_time);
-		let last_write_time = SystemTime::from_filetime(*last_write_time);
+		let creation_time = FileTimeInfo::from_filetime(*creation_time);
+		let last_access_time = FileTimeInfo::from_filetime(*last_access_time);
+		let last_write_time = FileTimeInfo::from_filetime(*last_write_time);
 		info.handler().set_file_time(file_name, creation_time, last_access_time, last_write_time, &info, info.context()).ntstatus()
 	}).unwrap_or(STATUS_INTERNAL_ERROR)
 }
