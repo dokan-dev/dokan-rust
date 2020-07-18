@@ -424,6 +424,10 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 			if let Some(entry) = children.get(EntryNameRef::new(name.file_name)) {
 				let stat = entry.stat().read().unwrap();
 				let is_readonly = stat.attrs.value & winnt::FILE_ATTRIBUTE_READONLY > 0;
+				let is_hidden_system = stat.attrs.value & winnt::FILE_ATTRIBUTE_HIDDEN > 0 &&
+					stat.attrs.value & winnt::FILE_ATTRIBUTE_SYSTEM > 0 &&
+					!(file_attributes & winnt::FILE_ATTRIBUTE_HIDDEN > 0 &&
+						file_attributes & winnt::FILE_ATTRIBUTE_SYSTEM > 0);
 				if is_readonly && desired_access & winnt::FILE_GENERIC_WRITE > 0 || stat.delete_pending {
 					return nt_res(STATUS_ACCESS_DENIED);
 				}
@@ -444,7 +448,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 							}
 							match create_disposition {
 								FILE_SUPERSEDE | FILE_OVERWRITE | FILE_OVERWRITE_IF => {
-									if is_readonly {
+									if create_disposition != FILE_SUPERSEDE && is_readonly {
 										return nt_res(STATUS_ACCESS_DENIED);
 									}
 									stat.attrs.value |= winnt::FILE_ATTRIBUTE_ARCHIVE;
@@ -484,32 +488,14 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 							return nt_res(STATUS_NOT_A_DIRECTORY);
 						}
 						match create_disposition {
-							FILE_SUPERSEDE => {
-								if is_readonly {
+							FILE_SUPERSEDE | FILE_OVERWRITE | FILE_OVERWRITE_IF => {
+								if create_disposition != FILE_SUPERSEDE && is_readonly || is_hidden_system {
 									return nt_res(STATUS_ACCESS_DENIED);
 								}
-								let token = info.requester_token().unwrap();
-								let mut stat = file.stat.write().unwrap();
-								let id = stat.id;
-								*stat = Stat::new(
-									id,
-									file_attributes | winnt::FILE_ATTRIBUTE_ARCHIVE,
-									SecurityDescriptor::new_inherited(
-										&parent.stat.read().unwrap().sec_desc,
-										creator_desc, token.as_raw_handle(), false,
-									)?,
-									Arc::downgrade(&parent),
-								);
 								file.data.write().unwrap().clear();
-							}
-							FILE_OVERWRITE | FILE_OVERWRITE_IF => {
-								if is_readonly {
-									return nt_res(STATUS_ACCESS_DENIED);
-								}
 								let mut stat = file.stat.write().unwrap();
-								stat.attrs.value |= winnt::FILE_ATTRIBUTE_ARCHIVE;
+								stat.attrs = Attributes::new(file_attributes | winnt::FILE_ATTRIBUTE_ARCHIVE);
 								stat.mtime = SystemTime::now();
-								file.data.write().unwrap().clear();
 							}
 							FILE_CREATE => return nt_res(STATUS_OBJECT_NAME_COLLISION),
 							_ => (),
