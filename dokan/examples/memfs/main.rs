@@ -428,7 +428,10 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 					stat.attrs.value & winnt::FILE_ATTRIBUTE_SYSTEM > 0 &&
 					!(file_attributes & winnt::FILE_ATTRIBUTE_HIDDEN > 0 &&
 						file_attributes & winnt::FILE_ATTRIBUTE_SYSTEM > 0);
-				if is_readonly && desired_access & winnt::FILE_GENERIC_WRITE > 0 || stat.delete_pending {
+				if is_readonly &&
+					(desired_access & winnt::FILE_WRITE_DATA > 0 ||
+						desired_access & winnt::FILE_APPEND_DATA > 0) ||
+					stat.delete_pending {
 					return nt_res(STATUS_ACCESS_DENIED);
 				}
 				if is_readonly && delete_on_close {
