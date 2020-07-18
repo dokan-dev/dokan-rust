@@ -338,6 +338,9 @@ impl MemFsHandler {
 		children: &mut HashMap<EntryName, Entry>,
 		is_dir: bool,
 	) -> Result<CreateFileInfo<EntryHandle>, OperationError> {
+		if attrs & winnt::FILE_ATTRIBUTE_READONLY > 0 && delete_on_close {
+			return nt_res(STATUS_CANNOT_DELETE);
+		}
 		let mut stat = Stat::new(
 			self.next_id(),
 			attrs,
@@ -423,6 +426,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 				let is_readonly = stat.attrs.value & winnt::FILE_ATTRIBUTE_READONLY > 0;
 				if is_readonly && desired_access & winnt::FILE_GENERIC_WRITE > 0 || stat.delete_pending {
 					return nt_res(STATUS_ACCESS_DENIED);
+				}
+				if is_readonly && delete_on_close {
+					return nt_res(STATUS_CANNOT_DELETE);
 				}
 				std::mem::drop(stat);
 				let ret = if let Some(stream_info) = &name.stream_info {
@@ -732,6 +738,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		info: &OperationInfo<'a, 'b, Self>,
 		context: &'a Self::Context,
 	) -> Result<(), OperationError> {
+		if context.entry.stat().read().unwrap().attrs.value & winnt::FILE_ATTRIBUTE_READONLY > 0 {
+			return nt_res(STATUS_CANNOT_DELETE);
+		}
 		if let Some(stream) = &context.alt_stream {
 			stream.write().unwrap().delete_pending = info.delete_on_close();
 		} else {
