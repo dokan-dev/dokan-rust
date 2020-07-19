@@ -53,7 +53,7 @@ pub struct FullName<'a> {
 }
 
 impl<'a> FullName<'a> {
-	fn new(name: &'a U16Str) -> Result<Self, OperationError> {
+	pub fn new(name: &'a U16Str) -> Result<Self, OperationError> {
 		let name_slice = name.as_slice();
 		if let Some(offset1) = name_slice.iter().position(|x| *x == ':' as u16) {
 			let file_name = U16Str::from_slice(&name_slice[..offset1]);

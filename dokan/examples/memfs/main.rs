@@ -21,7 +21,7 @@ mod path;
 
 use security::SecurityDescriptor;
 use err_utils::*;
-use crate::path::FullName;
+use path::FullName;
 
 #[derive(Debug)]
 struct AltStream {
@@ -250,7 +250,7 @@ impl Clone for Entry {
 #[derive(Debug)]
 struct EntryHandle {
 	entry: Entry,
-	alt_stream: Option<Arc<RwLock<AltStream>>>,
+	alt_stream: RwLock<Option<Arc<RwLock<AltStream>>>>,
 	delete_on_close: bool,
 	mtime_delayed: Mutex<Option<SystemTime>>,
 	atime_delayed: Mutex<Option<SystemTime>>,
@@ -267,7 +267,7 @@ impl EntryHandle {
 		}
 		Self {
 			entry,
-			alt_stream,
+			alt_stream: RwLock::new(alt_stream),
 			delete_on_close,
 			mtime_delayed: Mutex::new(None),
 			atime_delayed: Mutex::new(None),
@@ -278,7 +278,7 @@ impl EntryHandle {
 	}
 
 	fn is_dir(&self) -> bool {
-		if self.alt_stream.is_some() { false } else { self.entry.is_dir() }
+		if self.alt_stream.read().unwrap().is_some() { false } else { self.entry.is_dir() }
 	}
 
 	fn update_atime(&self, stat: &mut Stat, atime: SystemTime) {
@@ -304,7 +304,7 @@ impl Drop for EntryHandle {
 		let parent_children = parent.as_ref()
 			.map(|p| p.children.write().unwrap());
 		let mut stat = self.entry.stat().write().unwrap();
-		if self.delete_on_close && self.alt_stream.is_none() {
+		if self.delete_on_close && self.alt_stream.read().unwrap().is_none() {
 			stat.delete_pending = true;
 		}
 		stat.handle_count -= 1;
@@ -321,7 +321,8 @@ impl Drop for EntryHandle {
 			// Ignore root directory.
 			stat.delete_pending = false
 		}
-		if let Some(stream) = &self.alt_stream {
+		let alt_stream = self.alt_stream.read().unwrap();
+		if let Some(stream) = alt_stream.as_ref() {
 			stat.mtime = SystemTime::now();
 			let mut stream_locked = stream.write().unwrap();
 			if self.delete_on_close {
@@ -653,7 +654,8 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 			buffer[0..len].copy_from_slice(&data[offset..offset + len]);
 			len as u32
 		};
-		if let Some(stream) = &context.alt_stream {
+		let alt_stream = context.alt_stream.read().unwrap();
+		if let Some(stream) = alt_stream.as_ref() {
 			Ok(do_read(&stream.read().unwrap().data))
 		} else if let Entry::File(file) = &context.entry {
 			Ok(do_read(&file.data.read().unwrap()))
@@ -679,7 +681,8 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 			data[offset..offset + len].copy_from_slice(buffer);
 			len as u32
 		};
-		let ret = if let Some(stream) = &context.alt_stream {
+		let alt_stream = context.alt_stream.read().unwrap();
+		let ret = if let Some(stream) = alt_stream.as_ref() {
 			Ok(do_write(&mut stream.write().unwrap().data))
 		} else if let Entry::File(file) = &context.entry {
 			Ok(do_write(&mut file.data.write().unwrap()))
@@ -715,12 +718,13 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		context: &'a Self::Context,
 	) -> Result<FileInfo, OperationError> {
 		let stat = context.entry.stat().read().unwrap();
+		let alt_stream = context.alt_stream.read().unwrap();
 		Ok(FileInfo {
 			attributes: stat.attrs.get_output_attrs(context.is_dir()),
 			creation_time: stat.ctime,
 			last_access_time: stat.atime,
 			last_write_time: stat.mtime,
-			file_size: if let Some(stream) = &context.alt_stream {
+			file_size: if let Some(stream) = alt_stream.as_ref() {
 				stream.read().unwrap().data.len() as u64
 			} else {
 				match &context.entry {
@@ -740,7 +744,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		_info: &OperationInfo<'a, 'b, Self>,
 		context: &'a Self::Context,
 	) -> Result<(), OperationError> {
-		if context.alt_stream.is_some() {
+		if context.alt_stream.read().unwrap().is_some() {
 			return nt_res(STATUS_INVALID_DEVICE_REQUEST);
 		}
 		if let Entry::Directory(dir) = &context.entry {
@@ -815,7 +819,8 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		if context.entry.stat().read().unwrap().attrs.value & winnt::FILE_ATTRIBUTE_READONLY > 0 {
 			return nt_res(STATUS_CANNOT_DELETE);
 		}
-		if let Some(stream) = &context.alt_stream {
+		let alt_stream = context.alt_stream.read().unwrap();
+		if let Some(stream) = alt_stream.as_ref() {
 			stream.write().unwrap().delete_pending = info.delete_on_close();
 		} else {
 			context.entry.stat().write().unwrap().delete_pending = info.delete_on_close();
@@ -830,7 +835,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		info: &OperationInfo<'a, 'b, Self>,
 		context: &'a Self::Context,
 	) -> Result<(), OperationError> {
-		if context.alt_stream.is_some() {
+		if context.alt_stream.read().unwrap().is_some() {
 			return nt_res(STATUS_INVALID_DEVICE_REQUEST);
 		}
 		if let Entry::Directory(dir) = &context.entry {
@@ -860,53 +865,142 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		_info: &OperationInfo<'a, 'b, Self>,
 		context: &'a Self::Context,
 	) -> Result<(), OperationError> {
-		if context.alt_stream.is_some() {
-			return nt_res(STATUS_INVALID_DEVICE_REQUEST);
-		}
 		let src_path = file_name.as_slice();
 		let offset = src_path.iter().rposition(|x| *x == '\\' as u16)
 			.ok_or(nt_err(STATUS_INVALID_PARAMETER))?;
 		let src_name = U16Str::from_slice(&src_path[offset + 1..]);
-		let src_parent = context.entry.stat().read().unwrap().parent.upgrade().unwrap();
-		let (dst_name, dst_parent) = path::split_path(&self.root, new_file_name)?
-			.ok_or(nt_err(STATUS_INVALID_PARAMETER))?;
-		if dst_name.stream_info.is_some() {
-			return nt_res(STATUS_OBJECT_NAME_INVALID);
-		}
-		let now = SystemTime::now();
-		let src_name_ref = EntryNameRef::new(src_name);
-		let dst_name_ref = EntryNameRef::new(dst_name.file_name);
-		let check_can_move = |children: &mut HashMap<EntryName, Entry>| {
-			if let Some(entry) = children.get(dst_name_ref) {
-				if !replace_if_existing {
-					nt_res(STATUS_OBJECT_NAME_COLLISION)
-				} else if context.entry.is_dir() || entry.is_dir() || entry.stat().read().unwrap().handle_count > 1 {
-					nt_res(STATUS_ACCESS_DENIED)
-				} else {
-					children.remove(dst_name_ref).unwrap();
-					Ok(())
-				}
-			} else { Ok(()) }
-		};
-		if Arc::ptr_eq(&src_parent, &dst_parent) {
-			let mut children = src_parent.children.write().unwrap();
-			check_can_move(&mut children)?;
-			// Remove first in case moving to the same name.
-			let entry = children.remove(src_name_ref).unwrap();
-			assert_eq!(children.insert(EntryName(dst_name.file_name.to_owned()), entry), None);
-			src_parent.stat.write().unwrap().update_mtime(now);
-			context.update_atime(&mut context.entry.stat().write().unwrap(), now);
-		} else {
-			let mut src_children = src_parent.children.write().unwrap();
-			let mut dst_children = dst_parent.children.write().unwrap();
-			check_can_move(&mut dst_children)?;
-			let entry = src_children.remove(EntryNameRef::new(src_name)).unwrap();
-			assert_eq!(dst_children.insert(EntryName(dst_name.file_name.to_owned()), entry), None);
-			src_parent.stat.write().unwrap().update_mtime(now);
-			dst_parent.stat.write().unwrap().update_mtime(now);
+		let src_parent = context.entry.stat().read().unwrap().parent.upgrade()
+			.ok_or(nt_err(STATUS_INVALID_DEVICE_REQUEST))?;
+		if new_file_name.as_slice().first() == Some(&(':' as u16)) {
+			let src_stream_info = FullName::new(src_name)?.stream_info;
+			let dst_stream_info = FullName::new(U16Str::from_slice(new_file_name.as_slice()))?.stream_info;
+			let src_is_default = context.alt_stream.read().unwrap().is_none();
+			let dst_is_default = if let Some(stream_info) = &dst_stream_info {
+				stream_info.check_default(context.entry.is_dir())?
+			} else { true };
+			let check_can_move = |streams: &mut HashMap<EntryName, Arc<RwLock<AltStream>>>, name: &U16Str| {
+				let name_ref = EntryNameRef::new(name);
+				if let Some(stream) = streams.get(name_ref) {
+					if context.alt_stream.read().unwrap().as_ref()
+						.map(|s| Arc::ptr_eq(s, stream))
+						.unwrap_or(false) {
+						Ok(())
+					} else if !replace_if_existing {
+						nt_res(STATUS_OBJECT_NAME_COLLISION)
+					} else if stream.read().unwrap().handle_count > 0 {
+						nt_res(STATUS_ACCESS_DENIED)
+					} else {
+						streams.remove(name_ref).unwrap();
+						Ok(())
+					}
+				} else { Ok(()) }
+			};
 			let mut stat = context.entry.stat().write().unwrap();
-			stat.parent = Arc::downgrade(&dst_parent);
-			context.update_atime(&mut stat, now);
+			match (src_is_default, dst_is_default) {
+				(true, true) => if context.entry.is_dir() {
+					return nt_res(STATUS_OBJECT_NAME_INVALID);
+				},
+				(true, false) => if let Entry::File(file) = &context.entry {
+					let dst_name = dst_stream_info.unwrap().name;
+					check_can_move(&mut stat.alt_streams, dst_name)?;
+					let mut stream = AltStream::new();
+					let mut data = file.data.write().unwrap();
+					stream.handle_count = 1;
+					stream.delete_pending = stat.delete_pending;
+					stat.delete_pending = false;
+					stream.data = data.clone();
+					data.clear();
+					let stream = Arc::new(RwLock::new(stream));
+					assert!(stat.alt_streams
+						.insert(EntryName(dst_name.to_owned()), Arc::clone(&stream))
+						.is_none());
+					*context.alt_stream.write().unwrap() = Some(stream);
+				} else {
+					return nt_res(STATUS_OBJECT_NAME_INVALID);
+				}
+				(false, true) => if let Entry::File(file) = &context.entry {
+					let mut context_stream = context.alt_stream.write().unwrap();
+					let src_stream = context_stream.as_ref().unwrap();
+					let mut src_stream_locked = src_stream.write().unwrap();
+					if src_stream_locked.handle_count > 1 {
+						return nt_res(STATUS_SHARING_VIOLATION);
+					}
+					if !replace_if_existing {
+						return nt_res(STATUS_OBJECT_NAME_COLLISION);
+					}
+					src_stream_locked.handle_count -= 1;
+					stat.delete_pending = src_stream_locked.delete_pending;
+					src_stream_locked.delete_pending = false;
+					*file.data.write().unwrap() = src_stream_locked.data.clone();
+					stat.alt_streams.remove(EntryNameRef::new(src_stream_info.unwrap().name)).unwrap();
+					std::mem::drop(src_stream_locked);
+					*context_stream = None;
+				} else {
+					return nt_res(STATUS_OBJECT_NAME_INVALID);
+				}
+				(false, false) => {
+					let dst_name = dst_stream_info.unwrap().name;
+					check_can_move(&mut stat.alt_streams, dst_name)?;
+					let stream = stat.alt_streams.remove(EntryNameRef::new(src_stream_info.unwrap().name)).unwrap();
+					stat.alt_streams.insert(EntryName(dst_name.to_owned()), Arc::clone(&stream));
+					*context.alt_stream.write().unwrap() = Some(stream);
+				}
+			}
+			stat.update_atime(SystemTime::now());
+		} else {
+			if context.alt_stream.read().unwrap().is_some() {
+				return nt_res(STATUS_OBJECT_NAME_INVALID);
+			}
+			let (dst_name, dst_parent) = path::split_path(&self.root, new_file_name)?
+				.ok_or(nt_err(STATUS_OBJECT_NAME_INVALID))?;
+			if dst_name.stream_info.is_some() {
+				return nt_res(STATUS_OBJECT_NAME_INVALID);
+			}
+			let now = SystemTime::now();
+			let src_name_ref = EntryNameRef::new(src_name);
+			let dst_name_ref = EntryNameRef::new(dst_name.file_name);
+			let check_can_move = |children: &mut HashMap<EntryName, Entry>| {
+				if let Some(entry) = children.get(dst_name_ref) {
+					if &context.entry == entry {
+						Ok(())
+					} else if !replace_if_existing {
+						nt_res(STATUS_OBJECT_NAME_COLLISION)
+					} else if context.entry.is_dir() || entry.is_dir() {
+						nt_res(STATUS_ACCESS_DENIED)
+					} else {
+						let stat = entry.stat().read().unwrap();
+						let can_replace = stat.handle_count > 0 ||
+							stat.attrs.value & winnt::FILE_ATTRIBUTE_READONLY > 0;
+						std::mem::drop(stat);
+						if can_replace {
+							nt_res(STATUS_ACCESS_DENIED)
+						} else {
+							children.remove(dst_name_ref).unwrap();
+							Ok(())
+						}
+					}
+				} else { Ok(()) }
+			};
+			if Arc::ptr_eq(&src_parent, &dst_parent) {
+				let mut children = src_parent.children.write().unwrap();
+				check_can_move(&mut children)?;
+				// Remove first in case moving to the same name.
+				let entry = children.remove(src_name_ref).unwrap();
+				assert!(children.insert(EntryName(dst_name.file_name.to_owned()), entry).is_none());
+				src_parent.stat.write().unwrap().update_mtime(now);
+				context.update_atime(&mut context.entry.stat().write().unwrap(), now);
+			} else {
+				let mut src_children = src_parent.children.write().unwrap();
+				let mut dst_children = dst_parent.children.write().unwrap();
+				check_can_move(&mut dst_children)?;
+				let entry = src_children.remove(src_name_ref).unwrap();
+				assert!(dst_children.insert(EntryName(dst_name.file_name.to_owned()), entry).is_none());
+				src_parent.stat.write().unwrap().update_mtime(now);
+				dst_parent.stat.write().unwrap().update_mtime(now);
+				let mut stat = context.entry.stat().write().unwrap();
+				stat.parent = Arc::downgrade(&dst_parent);
+				context.update_atime(&mut stat, now);
+			}
 		}
 		Ok(())
 	}
@@ -918,7 +1012,8 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		_info: &OperationInfo<'a, 'b, Self>,
 		context: &'a Self::Context,
 	) -> Result<(), OperationError> {
-		let ret = if let Some(stream) = &context.alt_stream {
+		let alt_stream = context.alt_stream.read().unwrap();
+		let ret = if let Some(stream) = alt_stream.as_ref() {
 			stream.write().unwrap().data.resize(offset as usize, 0);
 			Ok(())
 		} else if let Entry::File(file) = &context.entry {
@@ -953,7 +1048,8 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 				data.reserve(alloc_size - cap);
 			}
 		};
-		let ret = if let Some(stream) = &context.alt_stream {
+		let alt_stream = context.alt_stream.read().unwrap();
+		let ret = if let Some(stream) = alt_stream.as_ref() {
 			set_alloc(&mut stream.write().unwrap().data);
 			Ok(())
 		} else if let Entry::File(file) = &context.entry {
