@@ -880,7 +880,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 			if let Some(entry) = children.get(dst_name_ref) {
 				if !replace_if_existing {
 					nt_res(STATUS_OBJECT_NAME_COLLISION)
-				} else if entry.stat().read().unwrap().handle_count > 1 {
+				} else if context.entry.is_dir() || entry.is_dir() || entry.stat().read().unwrap().handle_count > 1 {
 					nt_res(STATUS_ACCESS_DENIED)
 				} else {
 					children.remove(dst_name_ref).unwrap();
