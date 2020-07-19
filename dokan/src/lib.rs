@@ -591,8 +591,9 @@ impl FileTimeInfo {
 				-1 => FileTimeInfo::DisableUpdate,
 				-2 => FileTimeInfo::ResumeUpdate,
 				_ => {
-					let nanos = (time.dwLowDateTime as u64 + ((time.dwHighDateTime as u64) << 32)) * 100;
-					FileTimeInfo::SetTime(UNIX_EPOCH - FILETIME_OFFSET + Duration::from_nanos(nanos))
+					let time_val = time_val as u64;
+					FileTimeInfo::SetTime(UNIX_EPOCH - FILETIME_OFFSET
+						+ Duration::from_micros(time_val / 10) + Duration::from_nanos(time_val % 10 * 100))
 				}
 			}
 		}
