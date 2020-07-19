@@ -4,7 +4,6 @@ extern crate winapi;
 
 use std::borrow::Borrow;
 use std::collections::HashMap;
-use std::collections::hash_map;
 use std::hash::{Hash, Hasher};
 use std::os::windows::io::AsRawHandle;
 use std::sync::{Arc, Mutex, RwLock, Weak};
@@ -875,30 +874,34 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 			return nt_res(STATUS_OBJECT_NAME_INVALID);
 		}
 		let now = SystemTime::now();
+		let src_name_ref = EntryNameRef::new(src_name);
+		let dst_name_ref = EntryNameRef::new(dst_name.file_name);
+		let check_can_move = |children: &mut HashMap<EntryName, Entry>| {
+			if let Some(entry) = children.get(dst_name_ref) {
+				if !replace_if_existing {
+					nt_res(STATUS_OBJECT_NAME_COLLISION)
+				} else if entry.stat().read().unwrap().handle_count > 1 {
+					nt_res(STATUS_ACCESS_DENIED)
+				} else {
+					children.remove(dst_name_ref).unwrap();
+					Ok(())
+				}
+			} else { Ok(()) }
+		};
 		if Arc::ptr_eq(&src_parent, &dst_parent) {
 			let mut children = src_parent.children.write().unwrap();
-			children.remove(EntryNameRef::new(src_name)).unwrap();
-			assert_eq!(children.insert(EntryName(dst_name.file_name.to_owned()), context.entry.clone()), None);
+			check_can_move(&mut children)?;
+			// Remove first in case moving to the same name.
+			let entry = children.remove(src_name_ref).unwrap();
+			assert_eq!(children.insert(EntryName(dst_name.file_name.to_owned()), entry), None);
 			src_parent.stat.write().unwrap().update_mtime(now);
 			context.update_atime(&mut context.entry.stat().write().unwrap(), now);
 		} else {
 			let mut src_children = src_parent.children.write().unwrap();
 			let mut dst_children = dst_parent.children.write().unwrap();
-			match dst_children.entry(EntryName(dst_name.file_name.to_owned())) {
-				hash_map::Entry::Occupied(mut occupied_entry) => {
-					if !replace_if_existing {
-						return nt_res(STATUS_OBJECT_NAME_COLLISION);
-					}
-					if occupied_entry.get().stat().read().unwrap().handle_count > 1 {
-						return nt_res(STATUS_ACCESS_DENIED);
-					}
-					occupied_entry.insert(context.entry.clone());
-				}
-				hash_map::Entry::Vacant(vacant_entry) => {
-					vacant_entry.insert(context.entry.clone());
-				}
-			}
-			src_children.remove(EntryNameRef::new(src_name)).unwrap();
+			check_can_move(&mut dst_children)?;
+			let entry = src_children.remove(EntryNameRef::new(src_name)).unwrap();
+			assert_eq!(dst_children.insert(EntryName(dst_name.file_name.to_owned()), entry), None);
 			src_parent.stat.write().unwrap().update_mtime(now);
 			dst_parent.stat.write().unwrap().update_mtime(now);
 			let mut stat = context.entry.stat().write().unwrap();
