@@ -1,3 +1,4 @@
+extern crate clap;
 extern crate dokan;
 extern crate widestring;
 extern crate winapi;
@@ -10,6 +11,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::SystemTime;
 
+use clap::{App, Arg};
 use dokan::*;
 use widestring::{U16CStr, U16Str, U16CString, U16String};
 use winapi::shared::{ntdef, ntstatus::*};
@@ -1154,10 +1156,32 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 	}
 }
 
-fn main() -> Result<(), MountError> {
-	let mount_point = U16CString::from_str("Z").unwrap();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+	let matches = App::new("dokan-rust memfs example")
+		.author(env!("CARGO_PKG_AUTHORS"))
+		.arg(Arg::with_name("mount_point").short("m").long("mount-point")
+			.takes_value(true).value_name("MOUNT_POINT").required(true)
+			.help("Mount point path."))
+		.arg(Arg::with_name("thread_count").short("t").long("threads")
+			.takes_value(true).value_name("THREAD_COUNT").default_value("0")
+			.help("Thread count. Use \"0\" to let Dokan choose it automatically."))
+		.arg(Arg::with_name("dokan_debug").short("d").long("dokan-debug")
+			.help("Enable Dokan's debug output."))
+		.arg(Arg::with_name("removable").short("r").long("removable")
+			.help("Mount as a removable drive."))
+		.get_matches();
+	let mount_point = U16CString::from_str(matches.value_of("mount_point").unwrap())?;
+	let mut flags = MountFlags::ALT_STREAM;
+	if matches.is_present("dokan_debug") {
+		flags |= MountFlags::DEBUG | MountFlags::STDERR;
+	}
+	if matches.is_present("removable") {
+		flags |= MountFlags::REMOVABLE;
+	}
 	Drive::new()
 		.mount_point(&mount_point)
-		.flags(MountFlags::ALT_STREAM)
-		.mount(&MemFsHandler::new())
+		.thread_count(matches.value_of("thread_count").unwrap().parse()?)
+		.flags(flags)
+		.mount(&MemFsHandler::new())?;
+	Ok(())
 }
