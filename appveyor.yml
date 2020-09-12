@@ -40,8 +40,8 @@ install:
       Start-Process "$Env:TEMP\DokanSetup.exe" -ArgumentList "/quiet /norestart" -Wait
   - ps: |
       if ($Env:TOOLCHAIN -eq "gnu") {
-          cmd /c 'C:\msys64\usr\bin\bash.exe -l -c "pacman -Syu --noconfirm --noprogressbar" 2>&1'
-          cmd /c 'C:\msys64\usr\bin\bash.exe -l -c "pacman -Syu --needed --noconfirm --noprogressbar $MINGW_PACKAGE_PREFIX-toolchain" 2>&1'
+          cmd /c 'C:\msys64\usr\bin\bash.exe -l -c "pacman -Syu --noconfirm --noprogressbar" 2>&1 && taskkill /f /fi "MODULES eq msys-2.0.dll"'
+          cmd /c 'C:\msys64\usr\bin\bash.exe -l -c "pacman -Syu --needed --noconfirm --noprogressbar $MINGW_PACKAGE_PREFIX-toolchain" 2>&1 && taskkill /f /fi "MODULES eq msys-2.0.dll"'
           $Env:PATH = "C:\msys64\$Env:MSYSTEM\bin;$Env:PATH"
       }
   - ps: Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile "$Env:TEMP\rustup-init.exe"
