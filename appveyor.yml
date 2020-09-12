@@ -57,7 +57,7 @@ install:
       }
 
 before_build:
-  - ps: $version = (git describe --all --long).Split("/")[1]
+  - ps: $version = (git describe --tags).Split("/")[1]
   - ps: Update-AppveyorBuild -Version $version
   - cmd: git submodule update --init
   - ps: |
