@@ -64,7 +64,7 @@ dependencies = [
 
 [[package]]
 name = "dokan"
-version = "0.1.1+dokan140"
+version = "0.1.2+dokan141"
 dependencies = [
  "bitflags",
  "clap",

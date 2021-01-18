@@ -1,6 +1,6 @@
 [package]
 name = "dokan"
-version = "0.1.1+dokan140"
+version = "0.1.2+dokan141"
 authors = ["DDoSolitary <DDoSolitary@gmail.com>"]
 description = "Rust-friendly wrapper for Dokan (user mode file system library for Windows)"
 homepage = "https://dokan-dev.github.io"
