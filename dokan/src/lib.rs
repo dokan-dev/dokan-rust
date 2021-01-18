@@ -320,6 +320,12 @@ bitflags! {
 		/// It prevents filter drivers (like anti-virus software) from exponentially slowing down certain operations due
 		/// to repeatedly rebuilding state that they attach to the FCB header.
 		const ENABLE_FCB_GARBAGE_COLLECTION = DOKAN_OPTION_ENABLE_FCB_GARBAGE_COLLECTION;
+
+		/// Enable case-sensitive file names.
+		const CASE_SENSITIVE = DOKAN_OPTION_CASE_SENSITIVE;
+
+		/// Allow unmounting network drives from Windows Explorer.
+		const ENABLE_UNOUNT_NETWORK_DRIVE = DOKAN_OPTION_ENABLE_UNMOUNT_NETWORK_DRIVE;
 	}
 }
 

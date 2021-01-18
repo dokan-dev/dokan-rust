@@ -26,9 +26,9 @@ environment:
       TOOLCHAIN: gnu
       MSYSTEM: MINGW64
       USE_INSTALLED_LIB: "true"
-#    - ARCH: i686
-#      TOOLCHAIN: gnu
-#      MSYSTEM: MINGW32
+    - ARCH: i686
+      TOOLCHAIN: gnu
+      MSYSTEM: MINGW32
     - ARCH: i686
       TOOLCHAIN: gnu
       MSYSTEM: MINGW32
