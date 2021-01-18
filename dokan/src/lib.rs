@@ -315,15 +315,10 @@ bitflags! {
 		/// Regular range locks are always supported regardless of this flag.
 		const DISABLE_OPLOCKS = DOKAN_OPTION_DISABLE_OPLOCKS;
 
-		/// Satisfy single-entry, name-only directory searches directly without dispatching to
-		/// [`FileSystemHandler`] callbacks.
+		/// Enable garbage collection of file control blocks (FCB).
 		///
-		/// Such kind of searches are frequently requested by [CreateFile] on Windows 7. If the
-		/// target file is already opened, the driver can just simply the name without external
-		/// information.
-		///
-		/// [`FileSystemHandler`]: trait.FileSystemHandler.html
-		/// [CreateFile]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew
+		/// It prevents filter drivers (like anti-virus software) from exponentially slowing down certain operations due
+		/// to repeatedly rebuilding state that they attach to the FCB header.
 		const ENABLE_FCB_GARBAGE_COLLECTION = DOKAN_OPTION_ENABLE_FCB_GARBAGE_COLLECTION;
 	}
 }
