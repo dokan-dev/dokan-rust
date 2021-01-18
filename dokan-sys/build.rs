@@ -83,6 +83,8 @@ fn build_dokan(compiler: &Tool, version_major: &str) {
 		.arg("-D_EXPORTING")
 		.arg("-DUNICODE")
 		.arg("-D_UNICODE")
+		.arg("-DWINVER=0x0A00")
+		.arg("-D_WIN32_WINNT=0x0A00")
 		.arg("-Isrc/dokany/sys");
 	if compiler.is_like_msvc() {
 		compiler_cmd
