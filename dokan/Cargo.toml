@@ -18,14 +18,14 @@ appveyor = { repository = "Liryna/dokan-rust" }
 [dependencies]
 dokan-sys =  { version = "= 0.1.1", path = "../dokan-sys" }
 bitflags = "1.2.1"
-widestring = "0.4.0"
-winapi = { version = "0.3.8", features = ["std", "errhandlingapi", "handleapi", "heapapi", "ioapiset", "minwinbase", "minwindef", "ntdef", "ntstatus", "processthreadsapi", "sddl", "securitybaseapi", "synchapi", "winbase", "winerror", "winnt"] }
+widestring = "0.4.3"
+winapi = { version = "0.3.9", features = ["std", "errhandlingapi", "handleapi", "heapapi", "ioapiset", "minwinbase", "minwindef", "ntdef", "ntstatus", "processthreadsapi", "sddl", "securitybaseapi", "synchapi", "winbase", "winerror", "winnt"] }
 
 [dev-dependencies]
-clap = "2.33.1"
+clap = "2.33.3"
 lazy_static = "1.4.0"
-parking_lot = "0.10.0"
-regex = "1.3.4"
+parking_lot = "0.11.1"
+regex = "1.4.3"
 
 [package.metadata.docs.rs]
 default-target = "x86_64-pc-windows-msvc"

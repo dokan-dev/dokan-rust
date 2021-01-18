@@ -18,11 +18,11 @@ build = "build.rs"
 appveyor = { repository = "Liryna/dokan-rust" }
 
 [dependencies]
-libc = "0.2.66"
-winapi = { version = "0.3.8", features = ["std", "basetsd", "fileapi", "minwinbase", "minwindef", "ntdef", "winnt"] }
+libc = "0.2.82"
+winapi = { version = "0.3.9", features = ["std", "basetsd", "fileapi", "minwinbase", "minwindef", "ntdef", "winnt"] }
 
 [build-dependencies]
-cc = "1.0.50"
+cc = "1.0.66"
 
 [package.metadata.docs.rs]
 default-target = "x86_64-pc-windows-msvc"
