@@ -79,6 +79,16 @@ fn test_ntstatus() {
 	assert_eq!(Err::<(), OperationError>(err_nt).ntstatus(), STATUS_INTERNAL_ERROR);
 }
 
+#[test]
+fn test_debug_mode() {
+	set_debug_stream(DebugStream::Stdout);
+	set_debug_stream(DebugStream::Stderr);
+	set_lib_debug_mode(true);
+	set_lib_debug_mode(false);
+	assert!(set_driver_debug_mode(true));
+	assert!(set_driver_debug_mode(false));
+}
+
 struct TestContext {
 	tx: SyncSender<HandlerSignal>,
 }

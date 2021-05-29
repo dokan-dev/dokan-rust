@@ -37,10 +37,10 @@ pub const DOKAN_OPTION_MOUNT_MANAGER: ULONG = 64;
 pub const DOKAN_OPTION_CURRENT_SESSION: ULONG = 128;
 pub const DOKAN_OPTION_FILELOCK_USER_MODE: ULONG = 256;
 pub const DOKAN_OPTION_ENABLE_NOTIFICATION_API: ULONG = 512;
-pub const DOKAN_OPTION_DISABLE_OPLOCKS: ULONG = 1024;
 pub const DOKAN_OPTION_ENABLE_FCB_GARBAGE_COLLECTION: ULONG = 2048;
 pub const DOKAN_OPTION_CASE_SENSITIVE: ULONG = 4096;
 pub const DOKAN_OPTION_ENABLE_UNMOUNT_NETWORK_DRIVE: ULONG = 8192;
+pub const DOKAN_OPTION_DISPATCH_DRIVER_LOGS: ULONG =  16384;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -296,4 +296,7 @@ extern "stdcall" {
 	pub fn DokanNotifyXAttrUpdate(FilePath: LPCWSTR) -> BOOL;
 	pub fn DokanNotifyRename(OldPath: LPCWSTR, NewPath: LPCWSTR, IsDirectory: BOOL, IsInSameDirectory: BOOL) -> BOOL;
 	pub fn DokanNtStatusFromWin32(Error: DWORD) -> NTSTATUS;
+	pub fn DokanUseStdErr(Status: BOOL);
+	pub fn DokanDebugMode(Status: BOOL);
+	pub fn DokanSetDebugMode(Status: BOOL) -> BOOL;
 }

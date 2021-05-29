@@ -36,7 +36,7 @@ use std::{ptr, mem, panic, slice};
 use dokan_sys::{*, win32::*};
 use widestring::{U16CStr, U16CString};
 use winapi::ctypes::c_int;
-use winapi::shared::minwindef::{BOOL, DWORD, FILETIME, LPCVOID, LPVOID, LPDWORD, MAX_PATH, PULONG, TRUE, ULONG};
+use winapi::shared::minwindef::{BOOL, DWORD, FALSE, FILETIME, LPCVOID, LPVOID, LPDWORD, MAX_PATH, PULONG, TRUE, ULONG};
 use winapi::shared::ntdef::{HANDLE, NTSTATUS, LONGLONG, LPCWSTR, LPWSTR, PULONGLONG};
 use winapi::shared::ntstatus::{STATUS_BUFFER_OVERFLOW, STATUS_INTERNAL_ERROR, STATUS_NOT_IMPLEMENTED, STATUS_OBJECT_NAME_COLLISION, STATUS_SUCCESS};
 use winapi::um::fileapi::{BY_HANDLE_FILE_INFORMATION, LPBY_HANDLE_FILE_INFORMATION};
@@ -238,7 +238,6 @@ pub fn notify_update(path: impl AsRef<U16CStr>) -> bool {
 	unsafe { DokanNotifyUpdate(path.as_ref().as_ptr()) == TRUE }
 }
 
-
 /// Notifies Dokan that extended attributes of a file or directory has been changed.
 ///
 /// Returns `true` on success.
@@ -259,6 +258,42 @@ pub fn notify_rename(old_path: impl AsRef<U16CStr>, new_path: impl AsRef<U16CStr
 			old_path.as_ref().as_ptr(), new_path.as_ref().as_ptr(),
 			is_dir.into(), is_same_dir.into(),
 		) == TRUE
+	}
+}
+
+/// The output stream to write debug messages to.
+///
+/// Used by [`set_debug_stream`].
+///
+/// [`set_debug_stream`]: fn.set_debug_stream.html
+pub enum DebugStream {
+	/// The standard output stream.
+	Stdout,
+	/// The standard input stream.
+	Stderr,
+}
+
+/// Set the output stream to write debug messages to.
+pub fn set_debug_stream(stream: DebugStream) {
+	unsafe {
+		DokanUseStdErr(if let DebugStream::Stdout = stream { TRUE } else { FALSE });
+	}
+}
+
+/// Enable or disable debug mode of the user mode library.
+pub fn set_lib_debug_mode(enabled: bool) {
+	unsafe {
+		DokanDebugMode(if enabled { TRUE } else { FALSE });
+	}
+}
+
+/// Enable or disable debug mode of the kernel driver;
+///
+/// Returns `true` on success.
+#[must_use]
+pub fn set_driver_debug_mode(enabled: bool) -> bool {
+	unsafe {
+		DokanSetDebugMode(if enabled { TRUE } else { FALSE }) == TRUE
 	}
 }
 
@@ -310,11 +345,6 @@ bitflags! {
 		/// [`notify_create`]: fn.notify_create.html
 		const ENABLE_NOTIFICATION_API = DOKAN_OPTION_ENABLE_NOTIFICATION_API;
 
-		/// Disable support for opportunistic locks (i.e. oplocks).
-		///
-		/// Regular range locks are always supported regardless of this flag.
-		const DISABLE_OPLOCKS = DOKAN_OPTION_DISABLE_OPLOCKS;
-
 		/// Enable garbage collection of file control blocks (FCB).
 		///
 		/// It prevents filter drivers (like anti-virus software) from exponentially slowing down certain operations due
@@ -326,6 +356,9 @@ bitflags! {
 
 		/// Allow unmounting network drives from Windows Explorer.
 		const ENABLE_UNOUNT_NETWORK_DRIVE = DOKAN_OPTION_ENABLE_UNMOUNT_NETWORK_DRIVE;
+
+		/// Forward the kernel driver global and volume logs to the userland.
+		const DISPATCH_DRIVER_LOGS = DOKAN_OPTION_DISPATCH_DRIVER_LOGS;
 	}
 }
 
@@ -874,7 +907,8 @@ pub trait FileSystemHandler<'a, 'b: 'a>: Sync + Sized + 'b {
 
 	/// Called when the last handle for the file object has been closed.
 	///
-	/// If [`info.delete_on_close`] returns `true`, the file should be deleted in this function.
+	/// If [`info.delete_on_close`] returns `true`, the file should be deleted in this function. As the function doesn't
+	/// have a return value, you should make sure the file is deletable in [`delete_file`] or [`delete_directory`].
 	///
 	/// Note that the file object hasn't been released and there might be more I/O operations before
 	/// [`close_file`] gets called. (This typically happens when the file is memory-mapped.)
@@ -883,6 +917,8 @@ pub trait FileSystemHandler<'a, 'b: 'a>: Sync + Sized + 'b {
 	/// may also be reused, and in that case [`create_file`] will be called instead.
 	///
 	/// [`info.delete_on_close`]: struct.OperationInfo.html#method.delete_on_close
+	/// [`delete_file`]: #method.delete_file
+	/// [`delete_directory`]: #method.delete_directory
 	/// [`close_file`]: #method.close_file
 	/// [`create_file`]: #method.create_file
 	fn cleanup(
@@ -1063,8 +1099,8 @@ pub trait FileSystemHandler<'a, 'b: 'a>: Sync + Sized + 'b {
 	/// The file should not be deleted in this function. Instead, it should only check if the file
 	/// can be deleted and return `Ok` if that is possible.
 	///
-	/// It will also be called with [`info.delete_on_close`] returning true to notify that the file
-	/// is no longer requested to be deleted.
+	/// It will also be called with [`info.delete_on_close`] returning `false` to notify that the
+	/// file is no longer requested to be deleted.
 	///
 	/// [`info.delete_on_close`]: struct.OperationInfo.html#method.delete_on_close
 	fn delete_file(
@@ -1081,7 +1117,7 @@ pub trait FileSystemHandler<'a, 'b: 'a>: Sync + Sized + 'b {
 	/// Similar to [`delete_file`], it should only check if the directory can be deleted and delay
 	/// the actual deletion to the [`cleanup`] function.
 	///
-	/// It will also be called with [`info.delete_on_close`] returning true to notify that the
+	/// It will also be called with [`info.delete_on_close`] returning `false` to notify that the
 	/// directory is no longer requested to be deleted.
 	///
 	/// [`delete_file`]: #method.delete_file
