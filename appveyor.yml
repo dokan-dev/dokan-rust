@@ -92,8 +92,8 @@ deploy_script:
       cd doc
       if ($(git status --porcelain)) {
           Write-Host "Updating documentation..." -ForegroundColor Green
-          git add -A
-          git commit -m "Automatically update documentation for $version"
+          cmd /c "git add -A 2>&1"
+          cmd /c "git commit -m `"Automatically update documentation for $version`" 2>&1"
           cmd /c "git push 2>&1"
           if ($LASTEXITCODE -ne 0) { $host.SetShouldExit($LASTEXITCODE) }
           Write-Host -ForegroundColor Green "Documentation updated!"
