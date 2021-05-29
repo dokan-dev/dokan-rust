@@ -1022,8 +1022,8 @@ fn test_move_file() {
 fn test_set_end_of_file() {
 	with_test_drive(|rx| unsafe {
 		let hf = open_file("Z:\\test_set_end_of_file");
-		assert_eq!(SetFileValidData(hf, std::i64::MAX), TRUE);
-		assert_eq!(rx.recv().unwrap(), HandlerSignal::SetEndOfFile(std::i64::MAX));
+		assert_eq!(SetFileValidData(hf, i64::MAX), TRUE);
+		assert_eq!(rx.recv().unwrap(), HandlerSignal::SetEndOfFile(i64::MAX));
 		assert_eq!(CloseHandle(hf), TRUE);
 	});
 }
