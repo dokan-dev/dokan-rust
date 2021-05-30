@@ -6,7 +6,7 @@ branches:
 environment:
   RUST_BACKTRACE: 1
   AccessTokenDokanDoc:
-    secure: bWAI+3DIqfNZT/llXhEGiAsmSzJAmywFVyNgwHaTA5afb24GdHEQid6dRN5VJiTm
+    secure: Z5/daTZ6OJaDbslmhxSxxB6leKaqHTnTbISy153Y4cdJm/oTAbDHaofb9TqvKXV1
   matrix:
     - ARCH: x86_64
       TOOLCHAIN: msvc
