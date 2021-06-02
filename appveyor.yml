@@ -36,7 +36,7 @@ environment:
 
 install:
   - ps: |
-      Invoke-WebRequest https://github.com/dokan-dev/dokany/releases/download/v1.5.0.2000/DokanSetup.exe -OutFile "$Env:TEMP\DokanSetup.exe"
+      Invoke-WebRequest https://github.com/dokan-dev/dokany/releases/download/v1.5.0.3000/DokanSetup.exe -OutFile "$Env:TEMP\DokanSetup.exe"
       Start-Process "$Env:TEMP\DokanSetup.exe" -ArgumentList "/quiet /norestart" -Wait
   - ps: |
       if ($Env:TOOLCHAIN -eq "gnu") {
