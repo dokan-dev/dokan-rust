@@ -1,5 +1,5 @@
-use std::{mem, ptr};
 use std::pin::Pin;
+use std::{mem, ptr};
 
 use dokan::OperationError;
 use winapi::shared::{minwindef, ntdef, ntstatus::*, winerror};
@@ -14,9 +14,7 @@ struct PrivateObjectSecurity {
 
 impl PrivateObjectSecurity {
 	unsafe fn from_raw(ptr: winnt::PSECURITY_DESCRIPTOR) -> Self {
-		Self {
-			value: ptr,
-		}
+		Self { value: ptr }
 	}
 }
 
@@ -30,7 +28,7 @@ impl Drop for PrivateObjectSecurity {
 
 #[derive(Debug)]
 pub struct SecurityDescriptor {
-	desc_ptr: winnt::PSECURITY_DESCRIPTOR
+	desc_ptr: winnt::PSECURITY_DESCRIPTOR,
 }
 
 unsafe impl Sync for SecurityDescriptor {}
@@ -39,7 +37,8 @@ unsafe impl Send for SecurityDescriptor {}
 
 fn get_well_known_sid(sid_type: winnt::WELL_KNOWN_SID_TYPE) -> Result<Box<[u8]>, OperationError> {
 	unsafe {
-		let mut sid = vec![0u8; mem::size_of::<winnt::SID>() + mem::size_of::<u32>() * 7].into_boxed_slice();
+		let mut sid =
+			vec![0u8; mem::size_of::<winnt::SID>() + mem::size_of::<u32>() * 7].into_boxed_slice();
 		let mut len = sid.len() as u32;
 		let ret = securitybaseapi::CreateWellKnownSid(
 			sid_type,
@@ -47,7 +46,11 @@ fn get_well_known_sid(sid_type: winnt::WELL_KNOWN_SID_TYPE) -> Result<Box<[u8]>,
 			sid.as_mut_ptr() as winnt::PSID,
 			&mut len,
 		);
-		if ret == minwindef::TRUE { Ok(sid) } else { win32_last_res() }
+		if ret == minwindef::TRUE {
+			Ok(sid)
+		} else {
+			win32_last_res()
+		}
 	}
 }
 
@@ -60,10 +63,14 @@ fn create_default_dacl() -> Result<Box<[u8]>, OperationError> {
 
 		let acl_len = mem::size_of::<winnt::ACL>()
 			+ (mem::size_of::<winnt::ACCESS_ALLOWED_ACE>() - mem::size_of::<u32>()) * 4
-			+ admins_sid.len() + system_sid.len() + auth_sid.len() + users_sid.len();
+			+ admins_sid.len()
+			+ system_sid.len()
+			+ auth_sid.len()
+			+ users_sid.len();
 		let mut acl = vec![0u8; acl_len].into_boxed_slice();
 		let ret = securitybaseapi::InitializeAcl(
-			acl.as_mut_ptr() as winnt::PACL, acl_len as u32,
+			acl.as_mut_ptr() as winnt::PACL,
+			acl_len as u32,
 			winnt::ACL_REVISION as u32,
 		);
 		if ret == minwindef::FALSE {
@@ -95,7 +102,10 @@ fn create_default_dacl() -> Result<Box<[u8]>, OperationError> {
 			acl.as_mut_ptr() as winnt::PACL,
 			winnt::ACL_REVISION as u32,
 			flags,
-			winnt::FILE_GENERIC_READ | winnt::FILE_GENERIC_WRITE | winnt::FILE_GENERIC_EXECUTE | winnt::DELETE,
+			winnt::FILE_GENERIC_READ
+				| winnt::FILE_GENERIC_WRITE
+				| winnt::FILE_GENERIC_EXECUTE
+				| winnt::DELETE,
 			auth_sid.as_ptr() as winnt::PSID,
 		);
 		if ret == minwindef::FALSE {
@@ -131,7 +141,9 @@ impl SecurityDescriptor {
 		is_dir: bool,
 	) -> Result<Self, OperationError> {
 		unsafe {
-			if !creator_desc.is_null() && securitybaseapi::IsValidSecurityDescriptor(creator_desc) == minwindef::FALSE {
+			if !creator_desc.is_null()
+				&& securitybaseapi::IsValidSecurityDescriptor(creator_desc) == minwindef::FALSE
+			{
 				return nt_res(STATUS_INVALID_PARAMETER);
 			}
 
@@ -148,7 +160,6 @@ impl SecurityDescriptor {
 				return win32_last_res();
 			}
 			let priv_desc = PrivateObjectSecurity::from_raw(priv_desc);
-
 
 			let heap = heapapi::GetProcessHeap();
 			if heap.is_null() {
@@ -182,21 +193,25 @@ impl SecurityDescriptor {
 
 			let ret = securitybaseapi::SetSecurityDescriptorOwner(
 				abs_desc_ptr,
-				owner_sid.as_ptr() as winnt::PSID, minwindef::FALSE,
+				owner_sid.as_ptr() as winnt::PSID,
+				minwindef::FALSE,
 			);
 			if ret == minwindef::FALSE {
 				return win32_last_res();
 			}
 			let ret = securitybaseapi::SetSecurityDescriptorGroup(
 				abs_desc_ptr,
-				group_sid.as_ptr() as winnt::PSID, minwindef::FALSE,
+				group_sid.as_ptr() as winnt::PSID,
+				minwindef::FALSE,
 			);
 			if ret == minwindef::FALSE {
 				return win32_last_res();
 			}
 			let ret = securitybaseapi::SetSecurityDescriptorDacl(
 				abs_desc_ptr,
-				minwindef::TRUE, dacl.as_ptr() as winnt::PACL, minwindef::FALSE,
+				minwindef::TRUE,
+				dacl.as_ptr() as winnt::PACL,
+				minwindef::FALSE,
 			);
 			if ret == minwindef::FALSE {
 				return win32_last_res();
@@ -245,7 +260,11 @@ impl SecurityDescriptor {
 				sec_desc_len,
 				&mut ret_len,
 			);
-			if ret == minwindef::TRUE { Ok(len) } else { win32_last_res() }
+			if ret == minwindef::TRUE {
+				Ok(len)
+			} else {
+				win32_last_res()
+			}
 		}
 	}
 
@@ -267,7 +286,11 @@ impl SecurityDescriptor {
 				&FILE_GENERIC_MAPPING as *const _ as *mut _,
 				ptr::null_mut(),
 			);
-			if ret == minwindef::TRUE { Ok(()) } else { win32_last_res() }
+			if ret == minwindef::TRUE {
+				Ok(())
+			} else {
+				win32_last_res()
+			}
 		}
 	}
 }

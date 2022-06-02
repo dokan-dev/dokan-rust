@@ -11,9 +11,7 @@ pub fn nt_res<T>(stat: ntdef::NTSTATUS) -> Result<T, OperationError> {
 }
 
 fn win32_last_err() -> OperationError {
-	unsafe {
-		OperationError::Win32(errhandlingapi::GetLastError())
-	}
+	unsafe { OperationError::Win32(errhandlingapi::GetLastError()) }
 }
 
 pub fn win32_last_res<T>() -> Result<T, OperationError> {

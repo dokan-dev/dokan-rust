@@ -31,14 +31,19 @@ use std::fmt::{self, Display, Formatter};
 use std::marker::PhantomData;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::{ptr, mem, panic, slice};
+use std::{mem, panic, ptr, slice};
 
-use dokan_sys::{*, win32::*};
+use dokan_sys::{win32::*, *};
 use widestring::{U16CStr, U16CString};
 use winapi::ctypes::c_int;
-use winapi::shared::minwindef::{BOOL, DWORD, FALSE, FILETIME, LPCVOID, LPVOID, LPDWORD, MAX_PATH, PULONG, TRUE, ULONG};
-use winapi::shared::ntdef::{HANDLE, NTSTATUS, LONGLONG, LPCWSTR, LPWSTR, PULONGLONG};
-use winapi::shared::ntstatus::{STATUS_BUFFER_OVERFLOW, STATUS_INTERNAL_ERROR, STATUS_NOT_IMPLEMENTED, STATUS_OBJECT_NAME_COLLISION, STATUS_SUCCESS};
+use winapi::shared::minwindef::{
+	BOOL, DWORD, FALSE, FILETIME, LPCVOID, LPDWORD, LPVOID, MAX_PATH, PULONG, TRUE, ULONG,
+};
+use winapi::shared::ntdef::{HANDLE, LONGLONG, LPCWSTR, LPWSTR, NTSTATUS, PULONGLONG};
+use winapi::shared::ntstatus::{
+	STATUS_BUFFER_OVERFLOW, STATUS_INTERNAL_ERROR, STATUS_NOT_IMPLEMENTED,
+	STATUS_OBJECT_NAME_COLLISION, STATUS_SUCCESS,
+};
 use winapi::um::fileapi::{BY_HANDLE_FILE_INFORMATION, LPBY_HANDLE_FILE_INFORMATION};
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::minwinbase::WIN32_FIND_DATAW;
@@ -59,12 +64,16 @@ pub use dokan_sys::DOKAN_VERSION as WRAPPER_VERSION;
 ///
 /// The returned value is the version number without dots. For example, it returns `131` if Dokan
 /// v1.3.1 is loaded.
-pub fn lib_version() -> u32 { unsafe { DokanVersion() } }
+pub fn lib_version() -> u32 {
+	unsafe { DokanVersion() }
+}
 
 /// Gets version of the Dokan driver installed on the current system.
 ///
 /// The returned value is the version number without dots.
-pub fn driver_version() -> u32 { unsafe { DokanDriverVersion() } }
+pub fn driver_version() -> u32 {
+	unsafe { DokanDriverVersion() }
+}
 
 /// Checks whether the `name` matches the specified `expression`.
 ///
@@ -177,7 +186,9 @@ struct MountPointListWrapper {
 impl Drop for MountPointListWrapper {
 	fn drop(&mut self) {
 		if !self.list_ptr.is_null() {
-			unsafe { DokanReleaseMountPointList(self.list_ptr); }
+			unsafe {
+				DokanReleaseMountPointList(self.list_ptr);
+			}
 		}
 	}
 }
@@ -189,23 +200,39 @@ pub fn get_mount_point_list(unc_only: bool) -> Option<Vec<MountPointInfo>> {
 	unsafe {
 		let mut count: ULONG = 0;
 		let ffi_list = MountPointListWrapper {
-			list_ptr: DokanGetMountPointList(unc_only.into(), &mut count)
+			list_ptr: DokanGetMountPointList(unc_only.into(), &mut count),
 		};
-		if ffi_list.list_ptr.is_null() { None } else {
+		if ffi_list.list_ptr.is_null() {
+			None
+		} else {
 			let count = count as usize;
 			let mut list = Vec::with_capacity(count);
 			for control in slice::from_raw_parts(ffi_list.list_ptr, count) {
-				let mount_point = if control.MountPoint[0] == 0 { None } else {
-					Some(U16CStr::from_slice_with_nul(&control.MountPoint).unwrap().to_owned())
+				let mount_point = if control.MountPoint[0] == 0 {
+					None
+				} else {
+					Some(
+						U16CStr::from_slice_with_nul(&control.MountPoint)
+							.unwrap()
+							.to_owned(),
+					)
 				};
-				let unc_name = if control.UNCName[0] == 0 { None } else {
-					Some(U16CStr::from_slice_with_nul(&control.UNCName).unwrap().to_owned())
+				let unc_name = if control.UNCName[0] == 0 {
+					None
+				} else {
+					Some(
+						U16CStr::from_slice_with_nul(&control.UNCName)
+							.unwrap()
+							.to_owned(),
+					)
 				};
 				list.push(MountPointInfo {
 					device_type: control.Type,
 					mount_point,
 					unc_name,
-					device_name: U16CStr::from_slice_with_nul(&control.DeviceName).unwrap().to_owned(),
+					device_name: U16CStr::from_slice_with_nul(&control.DeviceName)
+						.unwrap()
+						.to_owned(),
 					session_id: control.SessionId,
 				})
 			}
@@ -252,11 +279,18 @@ pub fn notify_xattr_update(path: impl AsRef<U16CStr>) -> bool {
 ///
 /// Returns `true` on success.
 #[must_use]
-pub fn notify_rename(old_path: impl AsRef<U16CStr>, new_path: impl AsRef<U16CStr>, is_dir: bool, is_same_dir: bool) -> bool {
+pub fn notify_rename(
+	old_path: impl AsRef<U16CStr>,
+	new_path: impl AsRef<U16CStr>,
+	is_dir: bool,
+	is_same_dir: bool,
+) -> bool {
 	unsafe {
 		DokanNotifyRename(
-			old_path.as_ref().as_ptr(), new_path.as_ref().as_ptr(),
-			is_dir.into(), is_same_dir.into(),
+			old_path.as_ref().as_ptr(),
+			new_path.as_ref().as_ptr(),
+			is_dir.into(),
+			is_same_dir.into(),
 		) == TRUE
 	}
 }
@@ -276,7 +310,11 @@ pub enum DebugStream {
 /// Set the output stream to write debug messages to.
 pub fn set_debug_stream(stream: DebugStream) {
 	unsafe {
-		DokanUseStdErr(if let DebugStream::Stdout = stream { TRUE } else { FALSE });
+		DokanUseStdErr(if let DebugStream::Stdout = stream {
+			TRUE
+		} else {
+			FALSE
+		});
 	}
 }
 
@@ -292,9 +330,7 @@ pub fn set_lib_debug_mode(enabled: bool) {
 /// Returns `true` on success.
 #[must_use]
 pub fn set_driver_debug_mode(enabled: bool) -> bool {
-	unsafe {
-		DokanSetDebugMode(if enabled { TRUE } else { FALSE }) == TRUE
-	}
+	unsafe { DokanSetDebugMode(if enabled { TRUE } else { FALSE }) == TRUE }
 }
 
 bitflags! {
@@ -397,7 +433,9 @@ impl IntoRawHandle for TokenHandle {
 impl Drop for TokenHandle {
 	fn drop(&mut self) {
 		if self.value != INVALID_HANDLE_VALUE {
-			unsafe { CloseHandle(self.value); }
+			unsafe {
+				CloseHandle(self.value);
+			}
 		}
 	}
 }
@@ -447,32 +485,50 @@ impl<'a, 'b: 'a, 'c: 'b, T: FileSystemHandler<'b, 'c> + 'c> OperationInfo<'b, 'c
 	}
 
 	/// Gets process ID of the calling process.
-	pub fn pid(&self) -> u32 { self.file_info().ProcessId }
+	pub fn pid(&self) -> u32 {
+		self.file_info().ProcessId
+	}
 
 	/// Gets whether the target file is a directory.
-	pub fn is_dir(&self) -> bool { self.file_info().IsDirectory != 0 }
+	pub fn is_dir(&self) -> bool {
+		self.file_info().IsDirectory != 0
+	}
 
 	/// Gets whether the file should be deleted when it is closed.
-	pub fn delete_on_close(&self) -> bool { self.file_info().DeleteOnClose != 0 }
+	pub fn delete_on_close(&self) -> bool {
+		self.file_info().DeleteOnClose != 0
+	}
 
 	/// Gets whether it is a paging I/O operation.
-	pub fn paging_io(&self) -> bool { self.file_info().PagingIo != 0 }
+	pub fn paging_io(&self) -> bool {
+		self.file_info().PagingIo != 0
+	}
 
 	/// Gets whether it is a synchronous I/O operation.
-	pub fn synchronous_io(&self) -> bool { self.file_info().SynchronousIo != 0 }
+	pub fn synchronous_io(&self) -> bool {
+		self.file_info().SynchronousIo != 0
+	}
 
 	/// Gets whether it is a non-cached I/O operation.
-	pub fn no_cache(&self) -> bool { self.file_info().Nocache != 0 }
+	pub fn no_cache(&self) -> bool {
+		self.file_info().Nocache != 0
+	}
 
 	/// Gets whether the current write operation should write to end of file instead of the
 	/// position specified by the offset argument.
-	pub fn write_to_eof(&self) -> bool { self.file_info().WriteToEndOfFile != 0 }
+	pub fn write_to_eof(&self) -> bool {
+		self.file_info().WriteToEndOfFile != 0
+	}
 
 	/// Gets the number of threads used to handle file system operations.
-	pub fn thread_count(&self) -> u16 { self.mount_options().ThreadCount }
+	pub fn thread_count(&self) -> u16 {
+		self.mount_options().ThreadCount
+	}
 
 	/// Gets flags that controls behavior of the mounted volume.
-	pub fn mount_flags(&self) -> MountFlags { MountFlags::from_bits_truncate(self.mount_options().Options) }
+	pub fn mount_flags(&self) -> MountFlags {
+		MountFlags::from_bits_truncate(self.mount_options().Options)
+	}
 
 	/// Gets mount point path.
 	pub fn mount_point(&self) -> Option<&U16CStr> {
@@ -499,13 +555,19 @@ impl<'a, 'b: 'a, 'c: 'b, T: FileSystemHandler<'b, 'c> + 'c> OperationInfo<'b, 'c
 	/// See [`Drive::timeout`] for more information.
 	///
 	/// [`Drive::timeout`]: struct.Drive.html#method.timeout
-	pub fn timeout(&self) -> Duration { Duration::from_millis(self.mount_options().Timeout.into()) }
+	pub fn timeout(&self) -> Duration {
+		Duration::from_millis(self.mount_options().Timeout.into())
+	}
 
 	/// Gets allocation unit size of the volume.
-	pub fn allocation_unit_size(&self) -> u32 { self.mount_options().AllocationUnitSize }
+	pub fn allocation_unit_size(&self) -> u32 {
+		self.mount_options().AllocationUnitSize
+	}
 
 	/// Gets sector size of the volume.
-	pub fn sector_size(&self) -> u32 { self.mount_options().SectorSize }
+	pub fn sector_size(&self) -> u32 {
+		self.mount_options().SectorSize
+	}
 
 	/// Temporarily extend the timeout of the current operation.
 	///
@@ -555,7 +617,12 @@ impl Display for OperationError {
 		write!(f, "Dokan operation failed: ")?;
 		match self {
 			OperationError::NtStatus(e) => write!(f, "NTSTATUS 0x{:08x}", e),
-			OperationError::Win32(e) => write!(f, "Win32 error {} (converted to NTSTATUS 0x{:08x})", e, self.ntstatus()),
+			OperationError::Win32(e) => write!(
+				f,
+				"Win32 error {} (converted to NTSTATUS 0x{:08x})",
+				e,
+				self.ntstatus()
+			),
 		}
 	}
 }
@@ -594,8 +661,10 @@ trait ToFileTime {
 
 impl ToFileTime for SystemTime {
 	fn to_filetime(&self) -> FILETIME {
-		let intervals = self.duration_since(UNIX_EPOCH - FILETIME_OFFSET)
-			.unwrap_or(Duration::from_secs(0)).as_nanos() / 100;
+		let intervals = self
+			.duration_since(UNIX_EPOCH - FILETIME_OFFSET)
+			.unwrap_or(Duration::from_secs(0))
+			.as_nanos() / 100;
 		FILETIME {
 			dwLowDateTime: intervals as u32,
 			dwHighDateTime: (intervals >> 32) as u32,
@@ -626,8 +695,11 @@ impl FileTimeInfo {
 				-2 => FileTimeInfo::ResumeUpdate,
 				_ => {
 					let time_val = time_val as u64;
-					FileTimeInfo::SetTime(UNIX_EPOCH - FILETIME_OFFSET
-						+ Duration::from_micros(time_val / 10) + Duration::from_nanos(time_val % 10 * 100))
+					FileTimeInfo::SetTime(
+						UNIX_EPOCH - FILETIME_OFFSET
+							+ Duration::from_micros(time_val / 10)
+							+ Duration::from_nanos(time_val % 10 * 100),
+					)
 				}
 			}
 		}
@@ -926,7 +998,8 @@ pub trait FileSystemHandler<'a, 'b: 'a>: Sync + Sized + 'b {
 		_file_name: &U16CStr,
 		_info: &OperationInfo<'a, 'b, Self>,
 		_context: &'a Self::Context,
-	) {}
+	) {
+	}
 
 	/// Called when the last handle for the handle object has been closed and released.
 	///
@@ -943,7 +1016,8 @@ pub trait FileSystemHandler<'a, 'b: 'a>: Sync + Sized + 'b {
 		_file_name: &U16CStr,
 		_info: &OperationInfo<'a, 'b, Self>,
 		_context: &'a Self::Context,
-	) {}
+	) {
+	}
 
 	/// Reads data from the file.
 	///
@@ -1254,18 +1328,12 @@ pub trait FileSystemHandler<'a, 'b: 'a>: Sync + Sized + 'b {
 	}
 
 	/// Called when Dokan has successfully mounted the volume.
-	fn mounted(
-		&'b self,
-		_info: &OperationInfo<'a, 'b, Self>,
-	) -> Result<(), OperationError> {
+	fn mounted(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
 	/// Called when Dokan is unmounting the volume.
-	fn unmounted(
-		&'b self,
-		_info: &OperationInfo<'a, 'b, Self>,
-	) -> Result<(), OperationError> {
+	fn unmounted(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
@@ -1358,28 +1426,34 @@ extern "stdcall" fn create_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let mut info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.drop_context();
-		info.handler().create_file(
-			file_name,
-			&*security_context,
-			desired_access,
-			file_attributes,
-			share_access,
-			create_disposition,
-			create_options,
-			&mut info,
-		).and_then(|create_info| {
-			(&mut *dokan_file_info).Context = Box::into_raw(Box::new(create_info.context)) as u64;
-			(&mut *dokan_file_info).IsDirectory = create_info.is_dir.into();
-			if (create_disposition == FILE_OPEN_IF ||
-				create_disposition == FILE_OVERWRITE_IF ||
-				create_disposition == FILE_SUPERSEDE) &&
-				!create_info.new_file_created {
-				Err(OperationError::NtStatus(STATUS_OBJECT_NAME_COLLISION))
-			} else {
-				Ok(())
-			}
-		}).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+		info.handler()
+			.create_file(
+				file_name,
+				&*security_context,
+				desired_access,
+				file_attributes,
+				share_access,
+				create_disposition,
+				create_options,
+				&mut info,
+			)
+			.and_then(|create_info| {
+				(&mut *dokan_file_info).Context =
+					Box::into_raw(Box::new(create_info.context)) as u64;
+				(&mut *dokan_file_info).IsDirectory = create_info.is_dir.into();
+				if (create_disposition == FILE_OPEN_IF
+					|| create_disposition == FILE_OVERWRITE_IF
+					|| create_disposition == FILE_SUPERSEDE)
+					&& !create_info.new_file_created
+				{
+					Err(OperationError::NtStatus(STATUS_OBJECT_NAME_COLLISION))
+				} else {
+					Ok(())
+				}
+			})
+			.ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 #[allow(unused_must_use)]
@@ -1420,13 +1494,15 @@ extern "stdcall" fn read_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		let buffer = slice::from_raw_parts_mut(buffer as *mut _, buffer_length as usize);
-		let result = info.handler()
+		let result = info
+			.handler()
 			.read_file(file_name, offset, buffer, &info, info.context());
 		if let Ok(bytes_read) = result {
 			*read_length = bytes_read;
 		}
 		result.ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 extern "stdcall" fn write_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1442,13 +1518,15 @@ extern "stdcall" fn write_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		let buffer = slice::from_raw_parts(buffer as *mut _, number_of_bytes_to_write as usize);
-		let result = info.handler()
+		let result = info
+			.handler()
 			.write_file(file_name, offset, buffer, &info, info.context());
 		if let Ok(bytes_written) = result {
 			*number_of_bytes_written = bytes_written;
 		}
 		result.ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 extern "stdcall" fn flush_file_buffers<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1458,8 +1536,11 @@ extern "stdcall" fn flush_file_buffers<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> 
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		info.handler().flush_file_buffers(file_name, &info, info.context()).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+		info.handler()
+			.flush_file_buffers(file_name, &info, info.context())
+			.ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 extern "stdcall" fn get_file_information<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1475,8 +1556,10 @@ extern "stdcall" fn get_file_information<'a, 'b: 'a, T: FileSystemHandler<'a, 'b
 			.and_then(|file_info| {
 				*buffer = file_info.to_raw_struct();
 				Ok(())
-			}).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+			})
+			.ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 extern "stdcall" fn find_files<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1488,8 +1571,11 @@ extern "stdcall" fn find_files<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let fill_wrapper = fill_data_wrapper::<_, FindData>(fill_find_data, dokan_file_info);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		info.handler().find_files(file_name, fill_wrapper, &info, info.context()).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+		info.handler()
+			.find_files(file_name, fill_wrapper, &info, info.context())
+			.ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 extern "stdcall" fn find_files_with_pattern<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1503,8 +1589,17 @@ extern "stdcall" fn find_files_with_pattern<'a, 'b: 'a, T: FileSystemHandler<'a,
 		let search_pattern = U16CStr::from_ptr_str(search_pattern);
 		let fill_wrapper = fill_data_wrapper(fill_find_data, dokan_file_info);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		info.handler().find_files_with_pattern(file_name, search_pattern, fill_wrapper, &info, info.context()).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+		info.handler()
+			.find_files_with_pattern(
+				file_name,
+				search_pattern,
+				fill_wrapper,
+				&info,
+				info.context(),
+			)
+			.ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 extern "stdcall" fn set_file_attributes<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1515,8 +1610,11 @@ extern "stdcall" fn set_file_attributes<'a, 'b: 'a, T: FileSystemHandler<'a, 'b>
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		info.handler().set_file_attributes(file_name, file_attributes, &info, info.context()).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+		info.handler()
+			.set_file_attributes(file_name, file_attributes, &info, info.context())
+			.ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 extern "stdcall" fn set_file_time<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1532,8 +1630,18 @@ extern "stdcall" fn set_file_time<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>
 		let creation_time = FileTimeInfo::from_filetime(*creation_time);
 		let last_access_time = FileTimeInfo::from_filetime(*last_access_time);
 		let last_write_time = FileTimeInfo::from_filetime(*last_write_time);
-		info.handler().set_file_time(file_name, creation_time, last_access_time, last_write_time, &info, info.context()).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+		info.handler()
+			.set_file_time(
+				file_name,
+				creation_time,
+				last_access_time,
+				last_write_time,
+				&info,
+				info.context(),
+			)
+			.ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 extern "stdcall" fn delete_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1543,8 +1651,11 @@ extern "stdcall" fn delete_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		info.handler().delete_file(file_name, &info, info.context()).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+		info.handler()
+			.delete_file(file_name, &info, info.context())
+			.ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 extern "stdcall" fn delete_directory<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1554,8 +1665,11 @@ extern "stdcall" fn delete_directory<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		info.handler().delete_directory(file_name, &info, info.context()).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+		info.handler()
+			.delete_directory(file_name, &info, info.context())
+			.ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 extern "stdcall" fn move_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1568,8 +1682,17 @@ extern "stdcall" fn move_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let new_file_name = U16CStr::from_ptr_str(new_file_name);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		info.handler().move_file(file_name, new_file_name, replace_if_existing == TRUE, &info, info.context()).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+		info.handler()
+			.move_file(
+				file_name,
+				new_file_name,
+				replace_if_existing == TRUE,
+				&info,
+				info.context(),
+			)
+			.ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 extern "stdcall" fn set_end_of_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1580,8 +1703,11 @@ extern "stdcall" fn set_end_of_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + '
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		info.handler().set_end_of_file(file_name, byte_offset, &info, info.context()).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+		info.handler()
+			.set_end_of_file(file_name, byte_offset, &info, info.context())
+			.ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 extern "stdcall" fn set_allocation_size<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1592,8 +1718,11 @@ extern "stdcall" fn set_allocation_size<'a, 'b: 'a, T: FileSystemHandler<'a, 'b>
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		info.handler().set_allocation_size(file_name, alloc_size, &info, info.context()).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+		info.handler()
+			.set_allocation_size(file_name, alloc_size, &info, info.context())
+			.ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 // Extern stdcall functions with similar bodies but not called directly with trigger a compiler bug when built in
@@ -1604,13 +1733,29 @@ fn lock_unlock_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	byte_offset: LONGLONG,
 	length: LONGLONG,
 	dokan_file_info: PDOKAN_FILE_INFO,
-	func: fn(&'b T, &U16CStr, i64, i64, &OperationInfo<'a, 'b, T>, &'a T::Context) -> Result<(), OperationError>,
+	func: fn(
+		&'b T,
+		&U16CStr,
+		i64,
+		i64,
+		&OperationInfo<'a, 'b, T>,
+		&'a T::Context,
+	) -> Result<(), OperationError>,
 ) -> NTSTATUS {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		func(info.handler(), file_name, byte_offset, length, &info, info.context()).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+		func(
+			info.handler(),
+			file_name,
+			byte_offset,
+			length,
+			&info,
+			info.context(),
+		)
+		.ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 extern "stdcall" fn lock_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1619,7 +1764,13 @@ extern "stdcall" fn lock_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	length: LONGLONG,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
-	lock_unlock_file(file_name, byte_offset, length, dokan_file_info, T::lock_file)
+	lock_unlock_file(
+		file_name,
+		byte_offset,
+		length,
+		dokan_file_info,
+		T::lock_file,
+	)
 }
 
 extern "stdcall" fn unlock_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1628,7 +1779,13 @@ extern "stdcall" fn unlock_file<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	length: LONGLONG,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
-	lock_unlock_file(file_name, byte_offset, length, dokan_file_info, T::unlock_file)
+	lock_unlock_file(
+		file_name,
+		byte_offset,
+		length,
+		dokan_file_info,
+		T::unlock_file,
+	)
 }
 
 extern "stdcall" fn get_disk_free_space<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1639,19 +1796,23 @@ extern "stdcall" fn get_disk_free_space<'a, 'b: 'a, T: FileSystemHandler<'a, 'b>
 ) -> NTSTATUS {
 	panic::catch_unwind(|| {
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		info.handler().get_disk_free_space(&info).and_then(|space_info| unsafe {
-			if !free_bytes_available.is_null() {
-				*free_bytes_available = space_info.available_byte_count;
-			}
-			if !total_number_of_bytes.is_null() {
-				*total_number_of_bytes = space_info.byte_count;
-			}
-			if !total_number_of_free_bytes.is_null() {
-				*total_number_of_free_bytes = space_info.free_byte_count;
-			}
-			Ok(())
-		}).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+		info.handler()
+			.get_disk_free_space(&info)
+			.and_then(|space_info| unsafe {
+				if !free_bytes_available.is_null() {
+					*free_bytes_available = space_info.available_byte_count;
+				}
+				if !total_number_of_bytes.is_null() {
+					*total_number_of_bytes = space_info.byte_count;
+				}
+				if !total_number_of_free_bytes.is_null() {
+					*total_number_of_free_bytes = space_info.free_byte_count;
+				}
+				Ok(())
+			})
+			.ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 extern "stdcall" fn get_volume_information<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1666,27 +1827,31 @@ extern "stdcall" fn get_volume_information<'a, 'b: 'a, T: FileSystemHandler<'a, 
 ) -> NTSTATUS {
 	panic::catch_unwind(|| {
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		info.handler().get_volume_information(&info).and_then(|volume_info| unsafe {
-			volume_name_buffer.copy_from_nonoverlapping(
-				volume_info.name.as_ptr(),
-				(volume_info.name.len() + 1).min(volume_name_size as usize),
-			);
-			if !volume_serial_number.is_null() {
-				*volume_serial_number = volume_info.serial_number;
-			}
-			if !maximum_component_length.is_null() {
-				*maximum_component_length = volume_info.max_component_length;
-			}
-			if !file_system_flags.is_null() {
-				*file_system_flags = volume_info.fs_flags;
-			}
-			file_system_name_buffer.copy_from_nonoverlapping(
-				volume_info.fs_name.as_ptr(),
-				(volume_info.fs_name.len() + 1).min(file_system_name_size as usize),
-			);
-			Ok(())
-		}).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+		info.handler()
+			.get_volume_information(&info)
+			.and_then(|volume_info| unsafe {
+				volume_name_buffer.copy_from_nonoverlapping(
+					volume_info.name.as_ptr(),
+					(volume_info.name.len() + 1).min(volume_name_size as usize),
+				);
+				if !volume_serial_number.is_null() {
+					*volume_serial_number = volume_info.serial_number;
+				}
+				if !maximum_component_length.is_null() {
+					*maximum_component_length = volume_info.max_component_length;
+				}
+				if !file_system_flags.is_null() {
+					*file_system_flags = volume_info.fs_flags;
+				}
+				file_system_name_buffer.copy_from_nonoverlapping(
+					volume_info.fs_name.as_ptr(),
+					(volume_info.fs_name.len() + 1).min(file_system_name_size as usize),
+				);
+				Ok(())
+			})
+			.ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 // Same rationale as lock_unlock_file.
@@ -1697,14 +1862,19 @@ fn mounted_unmounted<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	panic::catch_unwind(|| {
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		func(info.handler(), &info).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-extern "stdcall" fn mounted<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(dokan_file_info: PDOKAN_FILE_INFO) -> NTSTATUS {
+extern "stdcall" fn mounted<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
+	dokan_file_info: PDOKAN_FILE_INFO,
+) -> NTSTATUS {
 	mounted_unmounted(dokan_file_info, T::mounted)
 }
 
-extern "stdcall" fn unmounted<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(dokan_file_info: PDOKAN_FILE_INFO) -> NTSTATUS {
+extern "stdcall" fn unmounted<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
+	dokan_file_info: PDOKAN_FILE_INFO,
+) -> NTSTATUS {
 	mounted_unmounted(dokan_file_info, T::unmounted)
 }
 
@@ -1737,7 +1907,8 @@ extern "stdcall" fn get_file_security<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> +
 		} else {
 			result.ntstatus()
 		}
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 extern "stdcall" fn set_file_security<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1750,15 +1921,18 @@ extern "stdcall" fn set_file_security<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> +
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		info.handler().set_file_security(
-			file_name,
-			*security_information,
-			security_descriptor,
-			buffer_length,
-			&info,
-			info.context(),
-		).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+		info.handler()
+			.set_file_security(
+				file_name,
+				*security_information,
+				security_descriptor,
+				buffer_length,
+				&info,
+				info.context(),
+			)
+			.ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 extern "stdcall" fn find_streams<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1770,8 +1944,11 @@ extern "stdcall" fn find_streams<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let fill_wrapper = fill_data_wrapper(fill_find_stream_data, dokan_file_info);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		info.handler().find_streams(file_name, fill_wrapper, &info, info.context()).ntstatus()
-	}).unwrap_or(STATUS_INTERNAL_ERROR)
+		info.handler()
+			.find_streams(file_name, fill_wrapper, &info, info.context())
+			.ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 /// The error type for [`Drive::mount`].
@@ -1904,7 +2081,10 @@ impl<'a> Drive<'a> {
 	}
 
 	/// Mounts the volume and blocks the current thread until the volume gets unmounted.
-	pub fn mount<'b, 'c: 'b, T: FileSystemHandler<'b, 'c> + 'c>(&mut self, handler: &'c T) -> Result<(), MountError> {
+	pub fn mount<'b, 'c: 'b, T: FileSystemHandler<'b, 'c> + 'c>(
+		&mut self,
+		handler: &'c T,
+	) -> Result<(), MountError> {
 		let mut operations = DOKAN_OPERATIONS {
 			ZwCreateFile: Some(create_file::<'b, 'c, T>),
 			Cleanup: Some(cleanup::<'b, 'c, T>),

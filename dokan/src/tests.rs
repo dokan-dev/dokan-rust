@@ -4,7 +4,7 @@ extern crate regex;
 
 use std::pin::Pin;
 use std::process;
-use std::sync::mpsc::{self, SyncSender, Receiver};
+use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread;
 
 use parking_lot::Mutex;
@@ -13,7 +13,10 @@ use winapi::shared::minwindef::{FALSE, HLOCAL};
 use winapi::shared::ntdef::{HANDLE, NULL};
 use winapi::shared::ntstatus::{STATUS_ACCESS_DENIED, STATUS_NOT_IMPLEMENTED};
 use winapi::shared::sddl::ConvertSidToStringSidW;
-use winapi::shared::winerror::{ERROR_HANDLE_EOF, ERROR_INSUFFICIENT_BUFFER, ERROR_INTERNAL_ERROR, ERROR_IO_PENDING, ERROR_NO_MORE_FILES, ERROR_SUCCESS};
+use winapi::shared::winerror::{
+	ERROR_HANDLE_EOF, ERROR_INSUFFICIENT_BUFFER, ERROR_INTERNAL_ERROR, ERROR_IO_PENDING,
+	ERROR_NO_MORE_FILES, ERROR_SUCCESS,
+};
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::fileapi::*;
 use winapi::um::ioapiset::GetOverlappedResult;
@@ -46,12 +49,36 @@ fn convert_str(s: impl AsRef<str>) -> U16CString {
 
 #[test]
 fn test_name_in_expression() {
-	assert!(is_name_in_expression(convert_str("foo"), convert_str("foo"), true));
-	assert!(is_name_in_expression(convert_str("*"), convert_str("foo"), true));
-	assert!(is_name_in_expression(convert_str("?"), convert_str("x"), true));
-	assert!(!is_name_in_expression(convert_str("?"), convert_str("foo"), true));
-	assert!(is_name_in_expression(convert_str("F*"), convert_str("foo"), true));
-	assert!(!is_name_in_expression(convert_str("F*"), convert_str("foo"), false));
+	assert!(is_name_in_expression(
+		convert_str("foo"),
+		convert_str("foo"),
+		true
+	));
+	assert!(is_name_in_expression(
+		convert_str("*"),
+		convert_str("foo"),
+		true
+	));
+	assert!(is_name_in_expression(
+		convert_str("?"),
+		convert_str("x"),
+		true
+	));
+	assert!(!is_name_in_expression(
+		convert_str("?"),
+		convert_str("foo"),
+		true
+	));
+	assert!(is_name_in_expression(
+		convert_str("F*"),
+		convert_str("foo"),
+		true
+	));
+	assert!(!is_name_in_expression(
+		convert_str("F*"),
+		convert_str("foo"),
+		false
+	));
 }
 
 #[test]
@@ -60,23 +87,39 @@ fn test_map_flags() {
 		FILE_ALL_ACCESS,
 		FILE_ATTRIBUTE_NORMAL,
 		FILE_WRITE_THROUGH,
-		FILE_OPEN);
-	assert_eq!(result.desired_access, GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL);
-	assert_eq!(result.flags_and_attributes, FILE_FLAG_WRITE_THROUGH | FILE_ATTRIBUTE_NORMAL);
+		FILE_OPEN,
+	);
+	assert_eq!(
+		result.desired_access,
+		GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL
+	);
+	assert_eq!(
+		result.flags_and_attributes,
+		FILE_FLAG_WRITE_THROUGH | FILE_ATTRIBUTE_NORMAL
+	);
 	assert_eq!(result.creation_disposition, OPEN_EXISTING);
 }
 
 #[test]
 fn test_ntstatus() {
-	assert_eq!(OperationError::NtStatus(STATUS_SUCCESS).ntstatus(), STATUS_INTERNAL_ERROR);
-	assert_eq!(OperationError::Win32(ERROR_SUCCESS).ntstatus(), STATUS_INTERNAL_ERROR);
+	assert_eq!(
+		OperationError::NtStatus(STATUS_SUCCESS).ntstatus(),
+		STATUS_INTERNAL_ERROR
+	);
+	assert_eq!(
+		OperationError::Win32(ERROR_SUCCESS).ntstatus(),
+		STATUS_INTERNAL_ERROR
+	);
 
 	let err_nt = OperationError::NtStatus(STATUS_INTERNAL_ERROR);
 	let err_win32 = OperationError::Win32(ERROR_INTERNAL_ERROR);
 	assert_eq!(err_nt.ntstatus(), err_win32.ntstatus());
 
 	assert_eq!(Ok::<(), OperationError>(()).ntstatus(), STATUS_SUCCESS);
-	assert_eq!(Err::<(), OperationError>(err_nt).ntstatus(), STATUS_INTERNAL_ERROR);
+	assert_eq!(
+		Err::<(), OperationError>(err_nt).ntstatus(),
+		STATUS_INTERNAL_ERROR
+	);
 }
 
 #[test]
@@ -173,16 +216,22 @@ fn get_descriptor_owner(desc: PSECURITY_DESCRIPTOR) -> (U16CString, BOOL) {
 fn get_user_info(token: HANDLE) -> Pin<Box<Vec<u8>>> {
 	unsafe {
 		let mut user_info_len = 0;
-		assert_eq!(GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut user_info_len), FALSE);
+		assert_eq!(
+			GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut user_info_len),
+			FALSE
+		);
 		assert_eq!(GetLastError(), ERROR_INSUFFICIENT_BUFFER);
 		let mut user_info_buffer = Box::pin(vec![0; user_info_len as usize]);
-		assert_eq!(GetTokenInformation(
-			token,
-			TokenUser,
-			user_info_buffer.as_mut_ptr() as LPVOID,
-			user_info_len,
-			&mut user_info_len,
-		), TRUE);
+		assert_eq!(
+			GetTokenInformation(
+				token,
+				TokenUser,
+				user_info_buffer.as_mut_ptr() as LPVOID,
+				user_info_len,
+				&mut user_info_len,
+			),
+			TRUE
+		);
 		assert_eq!(user_info_len as usize, user_info_buffer.len());
 		user_info_buffer
 	}
@@ -191,7 +240,10 @@ fn get_user_info(token: HANDLE) -> Pin<Box<Vec<u8>>> {
 fn get_current_user_info() -> Pin<Box<Vec<u8>>> {
 	unsafe {
 		let mut token = ptr::null_mut();
-		assert_eq!(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token), TRUE);
+		assert_eq!(
+			OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token),
+			TRUE
+		);
 		let info = get_user_info(token);
 		assert_eq!(CloseHandle(token), TRUE);
 		info
@@ -204,17 +256,29 @@ fn create_test_descriptor() -> Vec<u8> {
 		let user_info = &*(user_info_buffer.as_mut_ptr() as PTOKEN_USER);
 		let mut abs_desc = mem::zeroed::<SECURITY_DESCRIPTOR>();
 		let abs_desc_ptr = &mut abs_desc as *mut _ as PSECURITY_DESCRIPTOR;
-		assert_eq!(InitializeSecurityDescriptor(abs_desc_ptr, SECURITY_DESCRIPTOR_REVISION), TRUE);
-		assert_eq!(SetSecurityDescriptorOwner(abs_desc_ptr, user_info.User.Sid, FALSE), TRUE);
+		assert_eq!(
+			InitializeSecurityDescriptor(abs_desc_ptr, SECURITY_DESCRIPTOR_REVISION),
+			TRUE
+		);
+		assert_eq!(
+			SetSecurityDescriptorOwner(abs_desc_ptr, user_info.User.Sid, FALSE),
+			TRUE
+		);
 		let mut rel_desc_len = 0;
-		assert_eq!(MakeSelfRelativeSD(abs_desc_ptr, ptr::null_mut(), &mut rel_desc_len), FALSE);
+		assert_eq!(
+			MakeSelfRelativeSD(abs_desc_ptr, ptr::null_mut(), &mut rel_desc_len),
+			FALSE
+		);
 		assert_eq!(GetLastError(), ERROR_INSUFFICIENT_BUFFER);
 		let mut rel_desc_buffer = vec![0; rel_desc_len as usize];
-		assert_eq!(MakeSelfRelativeSD(
-			abs_desc_ptr,
-			rel_desc_buffer.as_mut_ptr() as PSECURITY_DESCRIPTOR,
-			&mut rel_desc_len,
-		), TRUE);
+		assert_eq!(
+			MakeSelfRelativeSD(
+				abs_desc_ptr,
+				rel_desc_buffer.as_mut_ptr() as PSECURITY_DESCRIPTOR,
+				&mut rel_desc_len,
+			),
+			TRUE
+		);
 		assert_eq!(rel_desc_len as usize, rel_desc_buffer.len());
 		rel_desc_buffer
 	}
@@ -236,21 +300,38 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	) -> Result<CreateFileInfo<Self::Context>, OperationError> {
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
-			"\\test_file_io" | "\\test_get_file_information" | "\\test_set_file_attributes" | "\\test_set_file_time" | "\\test_delete_file" | "\\test_move_file" | "\\test_set_end_of_file" | "\\test_set_allocation_size" | "\\test_lock_unlock_file" | "\\test_get_file_security" | "\\test_get_file_security_overflow" | "\\test_set_file_security" | "\\test_find_streams" => Ok(CreateFileInfo {
+			"\\test_file_io"
+			| "\\test_get_file_information"
+			| "\\test_set_file_attributes"
+			| "\\test_set_file_time"
+			| "\\test_delete_file"
+			| "\\test_move_file"
+			| "\\test_set_end_of_file"
+			| "\\test_set_allocation_size"
+			| "\\test_lock_unlock_file"
+			| "\\test_get_file_security"
+			| "\\test_get_file_security_overflow"
+			| "\\test_set_file_security"
+			| "\\test_find_streams" => Ok(CreateFileInfo {
 				context: None,
 				is_dir: false,
 				new_file_created: false,
 			}),
-			"\\" | "\\test_delete_directory" | "\\test_find_files" | "\\test_find_files_with_pattern" => {
-				Ok(CreateFileInfo {
-					context: None,
-					is_dir: true,
-					new_file_created: false,
-				})
-			}
+			"\\"
+			| "\\test_delete_directory"
+			| "\\test_find_files"
+			| "\\test_find_files_with_pattern" => Ok(CreateFileInfo {
+				context: None,
+				is_dir: true,
+				new_file_created: false,
+			}),
 			"\\test_open_requester_token" => {
 				let token = info.requester_token().unwrap();
-				self.tx.send(HandlerSignal::OpenRequesterToken(get_user_info(token.as_raw_handle()))).unwrap();
+				self.tx
+					.send(HandlerSignal::OpenRequesterToken(get_user_info(
+						token.as_raw_handle(),
+					)))
+					.unwrap();
 				Ok(CreateFileInfo {
 					context: None,
 					is_dir: false,
@@ -268,22 +349,24 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 				})
 			}
 			"\\test_operation_info" => {
-				self.tx.send(HandlerSignal::OperationInfo(OperationInfoDump {
-					pid: info.pid(),
-					is_dir: info.is_dir(),
-					delete_on_close: info.delete_on_close(),
-					paging_io: info.paging_io(),
-					synchronous_io: info.synchronous_io(),
-					no_cache: info.no_cache(),
-					write_to_eof: info.write_to_eof(),
-					thread_count: info.thread_count(),
-					mount_flags: info.mount_flags(),
-					mount_point: info.mount_point().map(|s| s.to_owned()),
-					unc_name: info.unc_name().map(|s| s.to_owned()),
-					timeout: info.timeout(),
-					allocation_unit_size: info.allocation_unit_size(),
-					sector_size: info.sector_size(),
-				})).unwrap();
+				self.tx
+					.send(HandlerSignal::OperationInfo(OperationInfoDump {
+						pid: info.pid(),
+						is_dir: info.is_dir(),
+						delete_on_close: info.delete_on_close(),
+						paging_io: info.paging_io(),
+						synchronous_io: info.synchronous_io(),
+						no_cache: info.no_cache(),
+						write_to_eof: info.write_to_eof(),
+						thread_count: info.thread_count(),
+						mount_flags: info.mount_flags(),
+						mount_point: info.mount_point().map(|s| s.to_owned()),
+						unc_name: info.unc_name().map(|s| s.to_owned()),
+						timeout: info.timeout(),
+						allocation_unit_size: info.allocation_unit_size(),
+						sector_size: info.sector_size(),
+					}))
+					.unwrap();
 				Ok(CreateFileInfo {
 					context: None,
 					is_dir: false,
@@ -291,13 +374,15 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 				})
 			}
 			"\\test_create_file" => {
-				self.tx.send(HandlerSignal::CreateFile(
-					desired_access,
-					file_attributes,
-					share_access,
-					create_disposition,
-					create_options,
-				)).unwrap();
+				self.tx
+					.send(HandlerSignal::CreateFile(
+						desired_access,
+						file_attributes,
+						share_access,
+						create_disposition,
+						create_options,
+					))
+					.unwrap();
 				Ok(CreateFileInfo {
 					context: None,
 					is_dir: false,
@@ -306,7 +391,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 			}
 			"\\test_panic" => panic!(),
 			"\\test_close_file" => Ok(CreateFileInfo {
-				context: Some(TestContext { tx: self.tx.clone() }),
+				context: Some(TestContext {
+					tx: self.tx.clone(),
+				}),
 				is_dir: false,
 				new_file_created: false,
 			}),
@@ -352,7 +439,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 			let data = "test data".as_bytes();
 			assert!(data.len() <= buffer.len());
 			buffer[..data.len()].copy_from_slice(data);
-			self.tx.send(HandlerSignal::ReadFile(offset, buffer.len())).unwrap();
+			self.tx
+				.send(HandlerSignal::ReadFile(offset, buffer.len()))
+				.unwrap();
 			Ok(data.len() as u32)
 		} else {
 			Err(OperationError::NtStatus(STATUS_ACCESS_DENIED))
@@ -370,7 +459,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_file_io" {
-			self.tx.send(HandlerSignal::WriteFile(offset, Vec::from(buffer))).unwrap();
+			self.tx
+				.send(HandlerSignal::WriteFile(offset, Vec::from(buffer)))
+				.unwrap();
 			Ok(buffer.len() as u32)
 		} else {
 			Err(OperationError::NtStatus(STATUS_ACCESS_DENIED))
@@ -401,7 +492,11 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	) -> Result<FileInfo, OperationError> {
 		check_pid(info.pid())?;
 		Ok(FileInfo {
-			attributes: if info.is_dir() { FILE_ATTRIBUTE_DIRECTORY } else { FILE_ATTRIBUTE_NORMAL },
+			attributes: if info.is_dir() {
+				FILE_ATTRIBUTE_DIRECTORY
+			} else {
+				FILE_ATTRIBUTE_NORMAL
+			},
 			creation_time: UNIX_EPOCH,
 			last_access_time: UNIX_EPOCH + Duration::from_secs(1),
 			last_write_time: UNIX_EPOCH + Duration::from_secs(2),
@@ -457,7 +552,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 					file_size: (1 << 32) + 2,
 					file_name: convert_str("test_inner_file_with_pattern"),
 				})?;
-				self.tx.send(HandlerSignal::FindFilesWithPattern(pattern.to_owned())).unwrap();
+				self.tx
+					.send(HandlerSignal::FindFilesWithPattern(pattern.to_owned()))
+					.unwrap();
 				Ok(())
 			}
 			_ => Err(OperationError::NtStatus(STATUS_ACCESS_DENIED)),
@@ -475,7 +572,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
 			"\\test_set_file_attributes" => {
-				self.tx.send(HandlerSignal::SetFileAttributes(file_attributes)).unwrap();
+				self.tx
+					.send(HandlerSignal::SetFileAttributes(file_attributes))
+					.unwrap();
 				Ok(())
 			}
 			"\\test_set_file_time" => Ok(()),
@@ -496,7 +595,13 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
 			"\\test_set_file_time" => {
-				self.tx.send(HandlerSignal::SetFileTime(creation_time, last_access_time, last_write_time)).unwrap();
+				self.tx
+					.send(HandlerSignal::SetFileTime(
+						creation_time,
+						last_access_time,
+						last_write_time,
+					))
+					.unwrap();
 				Ok(())
 			}
 			"\\test_set_file_attributes" => Ok(()),
@@ -513,7 +618,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_delete_file" {
-			self.tx.send(HandlerSignal::DeleteFile(info.delete_on_close())).unwrap();
+			self.tx
+				.send(HandlerSignal::DeleteFile(info.delete_on_close()))
+				.unwrap();
 			Ok(())
 		} else {
 			Err(OperationError::NtStatus(STATUS_ACCESS_DENIED))
@@ -529,7 +636,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_delete_directory" {
-			self.tx.send(HandlerSignal::DeleteDirectory(info.delete_on_close())).unwrap();
+			self.tx
+				.send(HandlerSignal::DeleteDirectory(info.delete_on_close()))
+				.unwrap();
 			Ok(())
 		} else {
 			Err(OperationError::NtStatus(STATUS_ACCESS_DENIED))
@@ -547,7 +656,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_move_file" {
-			self.tx.send(HandlerSignal::MoveFile(new_file_name.to_owned(), replace_if_existing)).unwrap();
+			self.tx
+				.send(HandlerSignal::MoveFile(
+					new_file_name.to_owned(),
+					replace_if_existing,
+				))
+				.unwrap();
 			Ok(())
 		} else {
 			Err(OperationError::NtStatus(STATUS_ACCESS_DENIED))
@@ -583,7 +697,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_set_allocation_size" {
-			self.tx.send(HandlerSignal::SetAllocationSize(alloc_size)).unwrap();
+			self.tx
+				.send(HandlerSignal::SetAllocationSize(alloc_size))
+				.unwrap();
 			Ok(())
 		} else {
 			Err(OperationError::NtStatus(STATUS_ACCESS_DENIED))
@@ -601,7 +717,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_lock_unlock_file" {
-			self.tx.send(HandlerSignal::LockFile(offset, length)).unwrap();
+			self.tx
+				.send(HandlerSignal::LockFile(offset, length))
+				.unwrap();
 			Ok(())
 		} else {
 			Err(OperationError::NtStatus(STATUS_ACCESS_DENIED))
@@ -619,14 +737,19 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_lock_unlock_file" {
-			self.tx.send(HandlerSignal::UnlockFile(offset, length)).unwrap();
+			self.tx
+				.send(HandlerSignal::UnlockFile(offset, length))
+				.unwrap();
 			Ok(())
 		} else {
 			Err(OperationError::NtStatus(STATUS_ACCESS_DENIED))
 		}
 	}
 
-	fn get_disk_free_space(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<DiskSpaceInfo, OperationError> {
+	fn get_disk_free_space(
+		&'b self,
+		_info: &OperationInfo<'a, 'b, Self>,
+	) -> Result<DiskSpaceInfo, OperationError> {
 		Ok(DiskSpaceInfo {
 			byte_count: 2 * 1024 * 1024,
 			free_byte_count: 1024 * 1024,
@@ -634,12 +757,18 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		})
 	}
 
-	fn get_volume_information(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<VolumeInfo, OperationError> {
+	fn get_volume_information(
+		&'b self,
+		_info: &OperationInfo<'a, 'b, Self>,
+	) -> Result<VolumeInfo, OperationError> {
 		Ok(VolumeInfo {
 			name: convert_str("Test Drive"),
 			serial_number: 1,
 			max_component_length: 255,
-			fs_flags: FILE_CASE_PRESERVED_NAMES | FILE_CASE_SENSITIVE_SEARCH | FILE_UNICODE_ON_DISK | FILE_NAMED_STREAMS,
+			fs_flags: FILE_CASE_PRESERVED_NAMES
+				| FILE_CASE_SENSITIVE_SEARCH
+				| FILE_UNICODE_ON_DISK
+				| FILE_NAMED_STREAMS,
 			fs_name: convert_str("TESTFS"),
 		})
 	}
@@ -667,15 +796,18 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
 			"\\test_get_file_security" => {
-				self.tx.send(HandlerSignal::GetFileSecurity(security_information, buffer_length)).unwrap();
+				self.tx
+					.send(HandlerSignal::GetFileSecurity(
+						security_information,
+						buffer_length,
+					))
+					.unwrap();
 				let desc = create_test_descriptor();
 				let result = Ok(desc.len() as u32);
 				if desc.len() <= buffer_length as usize {
 					unsafe {
-						desc.as_ptr().copy_to_nonoverlapping(
-							security_descriptor as *mut _,
-							desc.len(),
-						);
+						desc.as_ptr()
+							.copy_to_nonoverlapping(security_descriptor as *mut _, desc.len());
 					}
 				}
 				result
@@ -698,7 +830,14 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_set_file_security" {
 			let (sid, owner_defaulted) = get_descriptor_owner(security_descriptor);
-			self.tx.send(HandlerSignal::SetFileSecurity(buffer_length, security_information, sid, owner_defaulted)).unwrap();
+			self.tx
+				.send(HandlerSignal::SetFileSecurity(
+					buffer_length,
+					security_information,
+					sid,
+					owner_defaulted,
+				))
+				.unwrap();
 			Ok(())
 		} else {
 			Err(OperationError::NtStatus(STATUS_ACCESS_DENIED))
@@ -750,7 +889,12 @@ fn with_test_drive(f: impl FnOnce(&Receiver<HandlerSignal>)) {
 	let handle = thread::spawn(move || {
 		Drive::new()
 			.thread_count(4)
-			.flags(MountFlags::CURRENT_SESSION | MountFlags::FILELOCK_USER_MODE | MountFlags::ALT_STREAM | MountFlags::ENABLE_NOTIFICATION_API)
+			.flags(
+				MountFlags::CURRENT_SESSION
+					| MountFlags::FILELOCK_USER_MODE
+					| MountFlags::ALT_STREAM
+					| MountFlags::ENABLE_NOTIFICATION_API,
+			)
 			.mount_point(&convert_str("Z:\\"))
 			// Min value specified by DOKAN_IRP_PENDING_TIMEOUT.
 			.timeout(Duration::from_secs(15))
@@ -775,7 +919,8 @@ fn test_get_mount_point_list() {
 		assert_eq!(info.mount_point, Some(convert_str("\\DosDevices\\Z:")));
 		assert_eq!(info.unc_name, None);
 		assert!(
-			Regex::new("^\\\\Device\\\\Volume\\{[0-9a-z]{8}-([0-9a-z]{4}-){3}[0-9a-z]{12}}$").unwrap()
+			Regex::new("^\\\\Device\\\\Volume\\{[0-9a-z]{8}-([0-9a-z]{4}-){3}[0-9a-z]{12}}$")
+				.unwrap()
 				.is_match(&info.device_name.to_string_lossy())
 		);
 		let mut session_id = 0;
@@ -788,7 +933,18 @@ fn test_get_mount_point_list() {
 fn test_panic() {
 	with_test_drive(|_rx| unsafe {
 		let path = convert_str("Z:\\test_panic");
-		assert_eq!(CreateFileW(path.as_ptr(), 0, 0, ptr::null_mut(), OPEN_EXISTING, 0, ptr::null_mut()), INVALID_HANDLE_VALUE);
+		assert_eq!(
+			CreateFileW(
+				path.as_ptr(),
+				0,
+				0,
+				ptr::null_mut(),
+				OPEN_EXISTING,
+				0,
+				ptr::null_mut()
+			),
+			INVALID_HANDLE_VALUE
+		);
 		assert_eq!(GetLastError(), ERROR_INTERNAL_ERROR);
 	});
 }
@@ -802,21 +958,36 @@ fn test_get_volume_information() {
 		let mut serial_number = 0;
 		let mut max_component_length = 0;
 		let mut fs_flags = 0;
-		assert_ne!(GetVolumeInformationW(
-			path.as_ptr(),
-			volume_name.as_mut_ptr(),
-			volume_name.len() as u32,
-			&mut serial_number,
-			&mut max_component_length,
-			&mut fs_flags,
-			fs_name.as_mut_ptr(),
-			fs_name.len() as u32,
-		), 0);
-		assert_eq!(U16CStr::from_slice_with_nul(&volume_name).unwrap(), convert_str("Test Drive").as_ref());
-		assert_eq!(U16CStr::from_slice_with_nul(&fs_name).unwrap(), convert_str("TESTFS").as_ref());
+		assert_ne!(
+			GetVolumeInformationW(
+				path.as_ptr(),
+				volume_name.as_mut_ptr(),
+				volume_name.len() as u32,
+				&mut serial_number,
+				&mut max_component_length,
+				&mut fs_flags,
+				fs_name.as_mut_ptr(),
+				fs_name.len() as u32,
+			),
+			0
+		);
+		assert_eq!(
+			U16CStr::from_slice_with_nul(&volume_name).unwrap(),
+			convert_str("Test Drive").as_ref()
+		);
+		assert_eq!(
+			U16CStr::from_slice_with_nul(&fs_name).unwrap(),
+			convert_str("TESTFS").as_ref()
+		);
 		assert_eq!(serial_number, 1);
 		assert_eq!(max_component_length, 255);
-		assert_eq!(fs_flags, FILE_CASE_PRESERVED_NAMES | FILE_CASE_SENSITIVE_SEARCH | FILE_UNICODE_ON_DISK | FILE_NAMED_STREAMS);
+		assert_eq!(
+			fs_flags,
+			FILE_CASE_PRESERVED_NAMES
+				| FILE_CASE_SENSITIVE_SEARCH
+				| FILE_UNICODE_ON_DISK
+				| FILE_NAMED_STREAMS
+		);
 	});
 }
 
@@ -827,12 +998,15 @@ fn test_get_disk_free_space() {
 		let mut free_bytes_available = 0u64;
 		let mut total_number_of_bytes = 0u64;
 		let mut total_number_of_free_bytes = 0u64;
-		assert_eq!(GetDiskFreeSpaceExW(
-			path.as_ptr(),
-			&mut free_bytes_available as *mut _ as PULARGE_INTEGER,
-			&mut total_number_of_bytes as *mut _ as PULARGE_INTEGER,
-			&mut total_number_of_free_bytes as *mut _ as PULARGE_INTEGER,
-		), TRUE);
+		assert_eq!(
+			GetDiskFreeSpaceExW(
+				path.as_ptr(),
+				&mut free_bytes_available as *mut _ as PULARGE_INTEGER,
+				&mut total_number_of_bytes as *mut _ as PULARGE_INTEGER,
+				&mut total_number_of_free_bytes as *mut _ as PULARGE_INTEGER,
+			),
+			TRUE
+		);
 		assert_eq!(free_bytes_available, 512 * 1024);
 		assert_eq!(total_number_of_bytes, 2 * 1024 * 1024);
 		assert_eq!(total_number_of_free_bytes, 1024 * 1024);
@@ -861,13 +1035,16 @@ fn test_create_file() {
 	with_test_drive(|rx| unsafe {
 		let hf = open_file("Z:\\test_create_file");
 		assert_eq!(CloseHandle(hf), TRUE);
-		assert_eq!(rx.recv().unwrap(), HandlerSignal::CreateFile(
-			FILE_ALL_ACCESS,
-			FILE_ATTRIBUTE_NORMAL,
-			FILE_SHARE_READ,
-			FILE_OPEN,
-			FILE_WRITE_THROUGH | FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE,
-		));
+		assert_eq!(
+			rx.recv().unwrap(),
+			HandlerSignal::CreateFile(
+				FILE_ALL_ACCESS,
+				FILE_ATTRIBUTE_NORMAL,
+				FILE_SHARE_READ,
+				FILE_OPEN,
+				FILE_WRITE_THROUGH | FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE,
+			)
+		);
 	});
 }
 
@@ -888,13 +1065,37 @@ fn test_file_io() {
 		let hf = open_file("Z:\\test_file_io");
 		let mut buf = [0u8; 255];
 		let mut len = 0;
-		assert_eq!(ReadFile(hf, buf.as_mut_ptr() as LPVOID, buf.len() as u32, &mut len, ptr::null_mut()), TRUE);
-		assert_eq!(String::from_utf8(Vec::from(&buf[..len as usize])).unwrap(), "test data");
+		assert_eq!(
+			ReadFile(
+				hf,
+				buf.as_mut_ptr() as LPVOID,
+				buf.len() as u32,
+				&mut len,
+				ptr::null_mut()
+			),
+			TRUE
+		);
+		assert_eq!(
+			String::from_utf8(Vec::from(&buf[..len as usize])).unwrap(),
+			"test data"
+		);
 		assert_eq!(rx.recv().unwrap(), HandlerSignal::ReadFile(0, buf.len()));
 		let mut bytes_written = 0;
-		assert_eq!(WriteFile(hf, buf.as_ptr() as LPCVOID, len, &mut bytes_written, ptr::null_mut()), TRUE);
+		assert_eq!(
+			WriteFile(
+				hf,
+				buf.as_ptr() as LPCVOID,
+				len,
+				&mut bytes_written,
+				ptr::null_mut()
+			),
+			TRUE
+		);
 		assert_eq!(bytes_written, len);
-		assert_eq!(rx.recv().unwrap(), HandlerSignal::WriteFile(len as i64, Vec::from(&buf[0..len as usize])));
+		assert_eq!(
+			rx.recv().unwrap(),
+			HandlerSignal::WriteFile(len as i64, Vec::from(&buf[0..len as usize]))
+		);
 		assert_eq!(FlushFileBuffers(hf), TRUE);
 		assert_eq!(rx.recv().unwrap(), HandlerSignal::FlushFileBuffers);
 		assert_eq!(CloseHandle(hf), TRUE);
@@ -913,9 +1114,18 @@ fn test_get_file_information() {
 		assert_eq!(info.dwFileAttributes, FILE_ATTRIBUTE_NORMAL);
 		assert_eq!(info.ftCreationTime.dwLowDateTime, ft_epoch.dwLowDateTime);
 		assert_eq!(info.ftCreationTime.dwHighDateTime, ft_epoch.dwHighDateTime);
-		assert_eq!(info.ftLastAccessTime.dwLowDateTime, ft_epoch.dwLowDateTime + 1000 * 1000 * 10);
-		assert_eq!(info.ftLastAccessTime.dwHighDateTime, ft_epoch.dwHighDateTime);
-		assert_eq!(info.ftLastWriteTime.dwLowDateTime, ft_epoch.dwLowDateTime + 2000 * 1000 * 10);
+		assert_eq!(
+			info.ftLastAccessTime.dwLowDateTime,
+			ft_epoch.dwLowDateTime + 1000 * 1000 * 10
+		);
+		assert_eq!(
+			info.ftLastAccessTime.dwHighDateTime,
+			ft_epoch.dwHighDateTime
+		);
+		assert_eq!(
+			info.ftLastWriteTime.dwLowDateTime,
+			ft_epoch.dwLowDateTime + 2000 * 1000 * 10
+		);
 		assert_eq!(info.ftLastWriteTime.dwHighDateTime, ft_epoch.dwHighDateTime);
 		assert_eq!(info.dwVolumeSerialNumber, 1);
 		assert_eq!(info.nFileSizeLow, 2);
@@ -933,23 +1143,44 @@ fn check_dir_content(pattern: &str, file_name: &str) {
 		let hf = FindFirstFileW(pattern.as_ptr(), &mut data);
 		let ft_epoch = UNIX_EPOCH.to_filetime();
 		assert_ne!(hf, INVALID_HANDLE_VALUE);
-		assert_eq!(U16CStr::from_slice_with_nul(&data.cFileName).unwrap(), convert_str(".").as_ref());
+		assert_eq!(
+			U16CStr::from_slice_with_nul(&data.cFileName).unwrap(),
+			convert_str(".").as_ref()
+		);
 		assert_eq!(FindNextFileW(hf, &mut data), TRUE);
-		assert_eq!(U16CStr::from_slice_with_nul(&data.cFileName).unwrap(), convert_str("..").as_ref());
+		assert_eq!(
+			U16CStr::from_slice_with_nul(&data.cFileName).unwrap(),
+			convert_str("..").as_ref()
+		);
 		assert_eq!(FindNextFileW(hf, &mut data), TRUE);
 		assert_eq!(data.dwFileAttributes, FILE_ATTRIBUTE_NORMAL);
 		assert_eq!(data.ftCreationTime.dwLowDateTime, ft_epoch.dwLowDateTime);
 		assert_eq!(data.ftCreationTime.dwHighDateTime, ft_epoch.dwHighDateTime);
-		assert_eq!(data.ftLastAccessTime.dwLowDateTime, ft_epoch.dwLowDateTime + 1000 * 1000 * 10);
-		assert_eq!(data.ftLastAccessTime.dwHighDateTime, ft_epoch.dwHighDateTime);
-		assert_eq!(data.ftLastWriteTime.dwLowDateTime, ft_epoch.dwLowDateTime + 2000 * 1000 * 10);
+		assert_eq!(
+			data.ftLastAccessTime.dwLowDateTime,
+			ft_epoch.dwLowDateTime + 1000 * 1000 * 10
+		);
+		assert_eq!(
+			data.ftLastAccessTime.dwHighDateTime,
+			ft_epoch.dwHighDateTime
+		);
+		assert_eq!(
+			data.ftLastWriteTime.dwLowDateTime,
+			ft_epoch.dwLowDateTime + 2000 * 1000 * 10
+		);
 		assert_eq!(data.ftLastWriteTime.dwHighDateTime, ft_epoch.dwHighDateTime);
 		assert_eq!(data.nFileSizeLow, 2);
 		assert_eq!(data.nFileSizeHigh, 1);
-		assert_eq!(U16CStr::from_slice_with_nul(&data.cFileName).unwrap(), convert_str(file_name).as_ref());
+		assert_eq!(
+			U16CStr::from_slice_with_nul(&data.cFileName).unwrap(),
+			convert_str(file_name).as_ref()
+		);
 		assert_eq!(data.dwReserved0, 0);
 		assert_eq!(data.dwReserved1, 0);
-		assert_eq!(U16CStr::from_slice_with_nul(&data.cAlternateFileName).unwrap(), convert_str("").as_ref());
+		assert_eq!(
+			U16CStr::from_slice_with_nul(&data.cAlternateFileName).unwrap(),
+			convert_str("").as_ref()
+		);
 		assert_eq!(FindNextFileW(hf, &mut data), FALSE);
 		assert_eq!(GetLastError(), ERROR_NO_MORE_FILES);
 		assert_eq!(FindClose(hf), TRUE);
@@ -960,8 +1191,14 @@ fn check_dir_content(pattern: &str, file_name: &str) {
 fn test_find_files() {
 	with_test_drive(|rx| {
 		check_dir_content("Z:\\test_find_files\\*", "test_inner_file");
-		check_dir_content("Z:\\test_find_files_with_pattern\\*", "test_inner_file_with_pattern");
-		assert_eq!(rx.recv().unwrap(), HandlerSignal::FindFilesWithPattern(convert_str("*")));
+		check_dir_content(
+			"Z:\\test_find_files_with_pattern\\*",
+			"test_inner_file_with_pattern",
+		);
+		assert_eq!(
+			rx.recv().unwrap(),
+			HandlerSignal::FindFilesWithPattern(convert_str("*"))
+		);
 	});
 }
 
@@ -969,8 +1206,14 @@ fn test_find_files() {
 fn test_set_file_attributes() {
 	with_test_drive(|rx| unsafe {
 		let path = convert_str("Z:\\test_set_file_attributes");
-		assert_eq!(SetFileAttributesW(path.as_ptr(), FILE_ATTRIBUTE_READONLY), TRUE);
-		assert_eq!(rx.recv().unwrap(), HandlerSignal::SetFileAttributes(FILE_ATTRIBUTE_NORMAL | FILE_ATTRIBUTE_READONLY));
+		assert_eq!(
+			SetFileAttributesW(path.as_ptr(), FILE_ATTRIBUTE_READONLY),
+			TRUE
+		);
+		assert_eq!(
+			rx.recv().unwrap(),
+			HandlerSignal::SetFileAttributes(FILE_ATTRIBUTE_NORMAL | FILE_ATTRIBUTE_READONLY)
+		);
 	});
 }
 
@@ -981,21 +1224,43 @@ fn test_set_file_time() {
 		let ctime = UNIX_EPOCH;
 		let atime = UNIX_EPOCH + Duration::from_secs(1);
 		let mtime = UNIX_EPOCH + Duration::from_secs(2);
-		assert_eq!(SetFileTime(hf, &ctime.to_filetime(), &atime.to_filetime(), &mtime.to_filetime()), TRUE);
-		assert_eq!(rx.recv().unwrap(), HandlerSignal::SetFileTime(
-			FileTimeInfo::SetTime(ctime),
-			FileTimeInfo::SetTime(atime),
-			FileTimeInfo::SetTime(mtime),
-		));
+		assert_eq!(
+			SetFileTime(
+				hf,
+				&ctime.to_filetime(),
+				&atime.to_filetime(),
+				&mtime.to_filetime()
+			),
+			TRUE
+		);
+		assert_eq!(
+			rx.recv().unwrap(),
+			HandlerSignal::SetFileTime(
+				FileTimeInfo::SetTime(ctime),
+				FileTimeInfo::SetTime(atime),
+				FileTimeInfo::SetTime(mtime),
+			)
+		);
 		let time_dont_change = mem::transmute(0i64);
 		let time_disable_update = mem::transmute(-1i64);
 		let time_resume_update = mem::transmute(-2i64);
-		assert_eq!(SetFileTime(hf, &time_dont_change, &time_disable_update, &time_resume_update), TRUE);
-		assert_eq!(rx.recv().unwrap(), HandlerSignal::SetFileTime(
-			FileTimeInfo::DontChange,
-			FileTimeInfo::DisableUpdate,
-			FileTimeInfo::ResumeUpdate,
-		));
+		assert_eq!(
+			SetFileTime(
+				hf,
+				&time_dont_change,
+				&time_disable_update,
+				&time_resume_update
+			),
+			TRUE
+		);
+		assert_eq!(
+			rx.recv().unwrap(),
+			HandlerSignal::SetFileTime(
+				FileTimeInfo::DontChange,
+				FileTimeInfo::DisableUpdate,
+				FileTimeInfo::ResumeUpdate,
+			)
+		);
 		assert_eq!(CloseHandle(hf), TRUE);
 	});
 }
@@ -1023,8 +1288,14 @@ fn test_move_file() {
 	with_test_drive(|rx| unsafe {
 		let path = convert_str("Z:\\test_move_file");
 		let new_path = convert_str("Z:\\test_move_file_new");
-		assert_eq!(MoveFileExW(path.as_ptr(), new_path.as_ptr(), MOVEFILE_REPLACE_EXISTING), TRUE);
-		assert_eq!(rx.recv().unwrap(), HandlerSignal::MoveFile(convert_str("\\test_move_file_new"), true));
+		assert_eq!(
+			MoveFileExW(path.as_ptr(), new_path.as_ptr(), MOVEFILE_REPLACE_EXISTING),
+			TRUE
+		);
+		assert_eq!(
+			rx.recv().unwrap(),
+			HandlerSignal::MoveFile(convert_str("\\test_move_file_new"), true)
+		);
 	});
 }
 
@@ -1047,7 +1318,10 @@ fn test_set_allocation_size() {
 		assert_eq!(SetFilePointer(hf, dist_low, &mut dist_high, FILE_BEGIN), 42);
 		assert_eq!(dist_high, 42);
 		assert_eq!(SetEndOfFile(hf), TRUE);
-		assert_eq!(rx.recv().unwrap(), HandlerSignal::SetAllocationSize(dist_low as i64 + ((dist_high as i64) << 32)));
+		assert_eq!(
+			rx.recv().unwrap(),
+			HandlerSignal::SetAllocationSize(dist_low as i64 + ((dist_high as i64) << 32))
+		);
 		assert_eq!(CloseHandle(hf), TRUE);
 	});
 }
@@ -1070,19 +1344,37 @@ fn test_get_file_security() {
 		let expected_desc = create_test_descriptor();
 		let path = convert_str("Z:\\test_get_file_security");
 		let mut desc_len = 0;
-		assert_eq!(GetFileSecurityW(path.as_ptr(), OWNER_SECURITY_INFORMATION, ptr::null_mut(), 0, &mut desc_len), FALSE);
+		assert_eq!(
+			GetFileSecurityW(
+				path.as_ptr(),
+				OWNER_SECURITY_INFORMATION,
+				ptr::null_mut(),
+				0,
+				&mut desc_len
+			),
+			FALSE
+		);
 		assert_eq!(GetLastError(), ERROR_INSUFFICIENT_BUFFER);
-		assert_eq!(rx.recv().unwrap(), HandlerSignal::GetFileSecurity(OWNER_SECURITY_INFORMATION, 0));
+		assert_eq!(
+			rx.recv().unwrap(),
+			HandlerSignal::GetFileSecurity(OWNER_SECURITY_INFORMATION, 0)
+		);
 		let mut desc = vec![0u8; desc_len as usize];
-		assert_eq!(GetFileSecurityW(
-			path.as_ptr(),
-			OWNER_SECURITY_INFORMATION,
-			desc.as_mut_ptr() as PSECURITY_DESCRIPTOR,
-			desc.len() as u32,
-			&mut desc_len,
-		), TRUE);
+		assert_eq!(
+			GetFileSecurityW(
+				path.as_ptr(),
+				OWNER_SECURITY_INFORMATION,
+				desc.as_mut_ptr() as PSECURITY_DESCRIPTOR,
+				desc.len() as u32,
+				&mut desc_len,
+			),
+			TRUE
+		);
 		assert_eq!(desc.len(), desc_len as usize);
-		assert_eq!(rx.recv().unwrap(), HandlerSignal::GetFileSecurity(OWNER_SECURITY_INFORMATION, desc_len));
+		assert_eq!(
+			rx.recv().unwrap(),
+			HandlerSignal::GetFileSecurity(OWNER_SECURITY_INFORMATION, desc_len)
+		);
 		assert_eq!(desc, expected_desc);
 	});
 }
@@ -1092,13 +1384,16 @@ fn test_get_file_security_overflow() {
 	with_test_drive(|_rx| unsafe {
 		let path = convert_str("Z:\\test_get_file_security_overflow");
 		let mut ret_len = 0;
-		assert_eq!(GetFileSecurityW(
-			path.as_ptr(),
-			OWNER_SECURITY_INFORMATION,
-			ptr::null_mut(),
-			0,
-			&mut ret_len,
-		), FALSE);
+		assert_eq!(
+			GetFileSecurityW(
+				path.as_ptr(),
+				OWNER_SECURITY_INFORMATION,
+				ptr::null_mut(),
+				0,
+				&mut ret_len,
+			),
+			FALSE
+		);
 		assert_eq!(ret_len, 1);
 		assert_eq!(GetLastError(), ERROR_INSUFFICIENT_BUFFER);
 	});
@@ -1110,9 +1405,20 @@ fn test_set_file_security() {
 		let path = convert_str("Z:\\test_set_file_security");
 		let mut desc = create_test_descriptor();
 		let desc_ptr = desc.as_mut_ptr() as PSECURITY_DESCRIPTOR;
-		assert_eq!(SetFileSecurityW(path.as_ptr(), OWNER_SECURITY_INFORMATION, desc_ptr), TRUE);
+		assert_eq!(
+			SetFileSecurityW(path.as_ptr(), OWNER_SECURITY_INFORMATION, desc_ptr),
+			TRUE
+		);
 		let (sid, owner_defaulted) = get_descriptor_owner(desc_ptr);
-		assert_eq!(rx.recv().unwrap(), HandlerSignal::SetFileSecurity(desc.len() as u32, OWNER_SECURITY_INFORMATION, sid, owner_defaulted));
+		assert_eq!(
+			rx.recv().unwrap(),
+			HandlerSignal::SetFileSecurity(
+				desc.len() as u32,
+				OWNER_SECURITY_INFORMATION,
+				sid,
+				owner_defaulted
+			)
+		);
 	});
 }
 
@@ -1129,7 +1435,10 @@ fn test_find_streams() {
 		);
 		assert_ne!(hf, INVALID_HANDLE_VALUE);
 		assert_eq!(data.StreamSize.QuadPart(), &42);
-		assert_eq!(U16CStr::from_slice_with_nul(&data.cStreamName).unwrap(), convert_str("::$DATA").as_ref());
+		assert_eq!(
+			U16CStr::from_slice_with_nul(&data.cStreamName).unwrap(),
+			convert_str("::$DATA").as_ref()
+		);
 		assert_eq!(FindNextStreamW(hf, &mut data as *mut _ as LPVOID), FALSE);
 		assert_eq!(GetLastError(), ERROR_HANDLE_EOF);
 		assert_eq!(FindClose(hf), TRUE);
@@ -1141,7 +1450,15 @@ fn test_find_streams() {
 fn test_reset_timeout() {
 	with_test_drive(|_rx| unsafe {
 		let path = convert_str("Z:\\test_reset_timeout");
-		let hf = CreateFileW(path.as_ptr(), 0, 0, ptr::null_mut(), OPEN_EXISTING, 0, ptr::null_mut());
+		let hf = CreateFileW(
+			path.as_ptr(),
+			0,
+			0,
+			ptr::null_mut(),
+			OPEN_EXISTING,
+			0,
+			ptr::null_mut(),
+		);
 		assert_ne!(hf, INVALID_HANDLE_VALUE);
 		assert_eq!(CloseHandle(hf), TRUE);
 	});
@@ -1169,22 +1486,28 @@ fn test_operation_info() {
 	with_test_drive(|rx| unsafe {
 		let hf = open_file("Z:\\test_operation_info");
 		assert_eq!(CloseHandle(hf), TRUE);
-		assert_eq!(rx.recv().unwrap(), HandlerSignal::OperationInfo(OperationInfoDump {
-			pid: process::id(),
-			is_dir: false,
-			delete_on_close: false,
-			paging_io: false,
-			synchronous_io: false,
-			no_cache: false,
-			write_to_eof: false,
-			thread_count: 4,
-			mount_flags: MountFlags::CURRENT_SESSION | MountFlags::FILELOCK_USER_MODE | MountFlags::ALT_STREAM | MountFlags::ENABLE_NOTIFICATION_API,
-			mount_point: Some(convert_str("Z:\\")),
-			unc_name: None,
-			timeout: Duration::from_secs(15),
-			allocation_unit_size: 1024,
-			sector_size: 1024,
-		}));
+		assert_eq!(
+			rx.recv().unwrap(),
+			HandlerSignal::OperationInfo(OperationInfoDump {
+				pid: process::id(),
+				is_dir: false,
+				delete_on_close: false,
+				paging_io: false,
+				synchronous_io: false,
+				no_cache: false,
+				write_to_eof: false,
+				thread_count: 4,
+				mount_flags: MountFlags::CURRENT_SESSION
+					| MountFlags::FILELOCK_USER_MODE
+					| MountFlags::ALT_STREAM
+					| MountFlags::ENABLE_NOTIFICATION_API,
+				mount_point: Some(convert_str("Z:\\")),
+				unc_name: None,
+				timeout: Duration::from_secs(15),
+				allocation_unit_size: 1024,
+				sector_size: 1024,
+			})
+		);
 	});
 }
 
@@ -1192,22 +1515,28 @@ fn test_operation_info() {
 fn test_output_ptr_null() {
 	with_test_drive(|_rx| unsafe {
 		let path = convert_str("Z:\\");
-		assert_eq!(GetDiskFreeSpaceExW(
-			path.as_ptr(),
-			ptr::null_mut(),
-			ptr::null_mut(),
-			ptr::null_mut(),
-		), TRUE);
-		assert_eq!(GetVolumeInformationW(
-			path.as_ptr(),
-			ptr::null_mut(),
-			0,
-			ptr::null_mut(),
-			ptr::null_mut(),
-			ptr::null_mut(),
-			ptr::null_mut(),
-			0,
-		), TRUE);
+		assert_eq!(
+			GetDiskFreeSpaceExW(
+				path.as_ptr(),
+				ptr::null_mut(),
+				ptr::null_mut(),
+				ptr::null_mut(),
+			),
+			TRUE
+		);
+		assert_eq!(
+			GetVolumeInformationW(
+				path.as_ptr(),
+				ptr::null_mut(),
+				0,
+				ptr::null_mut(),
+				ptr::null_mut(),
+				ptr::null_mut(),
+				ptr::null_mut(),
+				0,
+			),
+			TRUE
+		);
 	})
 }
 
@@ -1225,16 +1554,26 @@ impl ToRawStruct<()> for ToRawStructStub {
 	}
 }
 
-extern "stdcall" fn fill_data_stub(_data: *mut (), _info: PDOKAN_FILE_INFO) -> c_int { 0 }
+extern "stdcall" fn fill_data_stub(_data: *mut (), _info: PDOKAN_FILE_INFO) -> c_int {
+	0
+}
 
-extern "stdcall" fn failing_fill_data_stub(_data: *mut (), _info: PDOKAN_FILE_INFO) -> c_int { 1 }
+extern "stdcall" fn failing_fill_data_stub(_data: *mut (), _info: PDOKAN_FILE_INFO) -> c_int {
+	1
+}
 
 #[test]
 fn test_fill_data_error() {
 	let mut wrapper = fill_data_wrapper(fill_data_stub, ptr::null_mut());
-	assert_eq!(wrapper(&ToRawStructStub { should_fail: true }), Err(FillDataError::NameTooLong));
+	assert_eq!(
+		wrapper(&ToRawStructStub { should_fail: true }),
+		Err(FillDataError::NameTooLong)
+	);
 	let mut wrapper = fill_data_wrapper(failing_fill_data_stub, ptr::null_mut());
-	assert_eq!(wrapper(&ToRawStructStub { should_fail: false }), Err(FillDataError::BufferFull));
+	assert_eq!(
+		wrapper(&ToRawStructStub { should_fail: false }),
+		Err(FillDataError::BufferFull)
+	);
 }
 
 struct DirectoryChangeIterator {
@@ -1263,7 +1602,10 @@ impl DirectoryChangeIterator {
 			assert_ne!(he, INVALID_HANDLE_VALUE);
 			let mut result = DirectoryChangeIterator {
 				hd: TokenHandle::from_raw_handle(hd),
-				buf: Box::pin(vec![0; mem::size_of::<FILE_NOTIFY_INFORMATION>() + MAX_PATH]),
+				buf: Box::pin(vec![
+					0;
+					mem::size_of::<FILE_NOTIFY_INFORMATION>() + MAX_PATH
+				]),
 				offset: 0,
 				he: TokenHandle::from_raw_handle(he),
 				overlapped: Box::pin(mem::zeroed()),
@@ -1301,20 +1643,33 @@ impl Iterator for DirectoryChangeIterator {
 		unsafe {
 			if self.offset == 0 {
 				let mut ret_len = 0;
-				assert_eq!(GetOverlappedResult(
-					self.hd.as_raw_handle(),
-					&mut *self.overlapped,
-					&mut ret_len,
-					TRUE,
-				), TRUE);
+				assert_eq!(
+					GetOverlappedResult(
+						self.hd.as_raw_handle(),
+						&mut *self.overlapped,
+						&mut ret_len,
+						TRUE,
+					),
+					TRUE
+				);
 				assert_eq!(self.overlapped.Internal, STATUS_SUCCESS as usize);
 				assert_eq!(self.overlapped.InternalHigh, ret_len as usize);
 				assert_ne!(ret_len, 0);
 			}
-			let info = &*(self.buf.as_ptr().offset(self.offset as isize) as *const FILE_NOTIFY_INFORMATION);
-			self.offset = if info.NextEntryOffset == 0 { 0 } else { self.offset + info.NextEntryOffset as usize };
-			if self.offset == 0 { self.begin_read(); }
-			Some((info.Action, U16CStr::from_ptr_str(info.FileName.as_ptr()).to_owned()))
+			let info = &*(self.buf.as_ptr().offset(self.offset as isize)
+				as *const FILE_NOTIFY_INFORMATION);
+			self.offset = if info.NextEntryOffset == 0 {
+				0
+			} else {
+				self.offset + info.NextEntryOffset as usize
+			};
+			if self.offset == 0 {
+				self.begin_read();
+			}
+			Some((
+				info.Action,
+				U16CStr::from_ptr_str(info.FileName.as_ptr()).to_owned(),
+			))
 		}
 	}
 }
@@ -1333,21 +1688,50 @@ fn test_notify() {
 		});
 		assert_eq!(rx.recv().unwrap(), None);
 		assert!(notify_create(convert_str("Z:\\test_notify_create"), false));
-		assert_eq!(rx.recv().unwrap(), Some((FILE_ACTION_ADDED, convert_str("test_notify_create"))));
+		assert_eq!(
+			rx.recv().unwrap(),
+			Some((FILE_ACTION_ADDED, convert_str("test_notify_create")))
+		);
 		assert!(notify_delete(convert_str("Z:\\test_notify_delete"), false));
-		assert_eq!(rx.recv().unwrap(), Some((FILE_ACTION_REMOVED, convert_str("test_notify_delete"))));
+		assert_eq!(
+			rx.recv().unwrap(),
+			Some((FILE_ACTION_REMOVED, convert_str("test_notify_delete")))
+		);
 		assert!(notify_update(convert_str("Z:\\test_notify_update")));
-		assert_eq!(rx.recv().unwrap(), Some((FILE_ACTION_MODIFIED, convert_str("test_notify_update"))));
-		assert!(notify_xattr_update(convert_str("Z:\\test_notify_xattr_update")));
-		assert_eq!(rx.recv().unwrap(), Some((FILE_ACTION_MODIFIED, convert_str("test_notify_xattr_update"))));
+		assert_eq!(
+			rx.recv().unwrap(),
+			Some((FILE_ACTION_MODIFIED, convert_str("test_notify_update")))
+		);
+		assert!(notify_xattr_update(convert_str(
+			"Z:\\test_notify_xattr_update"
+		)));
+		assert_eq!(
+			rx.recv().unwrap(),
+			Some((
+				FILE_ACTION_MODIFIED,
+				convert_str("test_notify_xattr_update")
+			))
+		);
 		assert!(notify_rename(
 			convert_str("Z:\\test_notify_rename_old"),
 			convert_str("Z:\\test_notify_rename_new"),
 			false,
 			true,
 		));
-		assert_eq!(rx.recv().unwrap(), Some((FILE_ACTION_RENAMED_OLD_NAME, convert_str("test_notify_rename_old"))));
-		assert_eq!(rx.recv().unwrap(), Some((FILE_ACTION_RENAMED_NEW_NAME, convert_str("test_notify_rename_new"))));
+		assert_eq!(
+			rx.recv().unwrap(),
+			Some((
+				FILE_ACTION_RENAMED_OLD_NAME,
+				convert_str("test_notify_rename_old")
+			))
+		);
+		assert_eq!(
+			rx.recv().unwrap(),
+			Some((
+				FILE_ACTION_RENAMED_NEW_NAME,
+				convert_str("test_notify_rename_new")
+			))
+		);
 		handle.join().unwrap();
 	})
 }
