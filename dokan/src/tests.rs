@@ -9,6 +9,7 @@ use std::thread;
 
 use parking_lot::Mutex;
 use regex::Regex;
+use winapi::ctypes::c_int;
 use winapi::shared::minwindef::{FALSE, HLOCAL};
 use winapi::shared::ntdef::{HANDLE, NULL};
 use winapi::shared::ntstatus::{STATUS_ACCESS_DENIED, STATUS_NOT_IMPLEMENTED};
@@ -151,7 +152,7 @@ struct OperationInfoDump {
 	synchronous_io: bool,
 	no_cache: bool,
 	write_to_eof: bool,
-	thread_count: u16,
+	single_thread: bool,
 	mount_flags: MountFlags,
 	mount_point: Option<U16CString>,
 	unc_name: Option<U16CString>,
@@ -186,6 +187,10 @@ enum HandlerSignal {
 	OpenRequesterToken(Pin<Box<Vec<u8>>>),
 	OperationInfo(OperationInfoDump),
 }
+
+struct DokanInstance(DOKAN_HANDLE);
+
+unsafe impl Send for DokanInstance {}
 
 #[derive(Debug)]
 struct TestHandler {
@@ -358,7 +363,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 						synchronous_io: info.synchronous_io(),
 						no_cache: info.no_cache(),
 						write_to_eof: info.write_to_eof(),
-						thread_count: info.thread_count(),
+						single_thread: info.single_thread(),
 						mount_flags: info.mount_flags(),
 						mount_point: info.mount_point().map(|s| s.to_owned()),
 						unc_name: info.unc_name().map(|s| s.to_owned()),
@@ -773,7 +778,11 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		})
 	}
 
-	fn mounted(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<(), OperationError> {
+	fn mounted(
+		&'b self,
+		_mount_point: &U16CStr,
+		_info: &OperationInfo<'a, 'b, Self>,
+	) -> Result<(), OperationError> {
 		self.tx.send(HandlerSignal::Mounted).unwrap();
 		Ok(())
 	}
@@ -868,10 +877,15 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 #[test]
 fn test_mount_error() {
 	let (tx, _rx) = mpsc::sync_channel(1024);
+
+	init();
+
 	let result = Drive::new()
 		.mount_point(&convert_str("0"))
 		.mount(&TestHandler { tx });
 	assert_eq!(result, Err(MountError::MountError));
+
+	shutdown();
 }
 
 lazy_static::lazy_static! {
@@ -879,21 +893,23 @@ lazy_static::lazy_static! {
 }
 
 #[allow(unused_must_use)]
-fn with_test_drive(f: impl FnOnce(&Receiver<HandlerSignal>)) {
+fn with_test_drive(f: impl FnOnce(&Receiver<HandlerSignal>, DOKAN_HANDLE)) {
 	let _guard = TEST_DRIVE_LOCK.lock();
 
 	// In case previous tests failed and didn't unmount the drive.
 	unmount(convert_str("Z:\\"));
 
+	init();
+
+	let (tx_instance, rx_instance) = mpsc::sync_channel(1);
 	let (tx, rx) = mpsc::sync_channel(1024);
 	let handle = thread::spawn(move || {
 		Drive::new()
-			.thread_count(4)
+			.single_thread(false)
 			.flags(
 				MountFlags::CURRENT_SESSION
 					| MountFlags::FILELOCK_USER_MODE
-					| MountFlags::ALT_STREAM
-					| MountFlags::ENABLE_NOTIFICATION_API,
+					| MountFlags::ALT_STREAM,
 			)
 			.mount_point(&convert_str("Z:\\"))
 			// Min value specified by DOKAN_IRP_PENDING_TIMEOUT.
@@ -901,17 +917,23 @@ fn with_test_drive(f: impl FnOnce(&Receiver<HandlerSignal>)) {
 			.allocation_unit_size(1024)
 			.sector_size(1024)
 			.mount(&TestHandler { tx })
+			.map(|handle| {
+				tx_instance.send(DokanInstance(handle.instance())).unwrap();
+			})
 	});
+	let instance = rx_instance.recv().unwrap().0;
 	assert_eq!(rx.recv().unwrap(), HandlerSignal::Mounted);
-	f(&rx);
+	f(&rx, instance);
 	assert!(unmount(convert_str("Z:\\")));
 	assert_eq!(rx.recv().unwrap(), HandlerSignal::Unmounted);
 	handle.join().unwrap().unwrap();
+
+	shutdown();
 }
 
 #[test]
 fn test_get_mount_point_list() {
-	with_test_drive(|_rx| unsafe {
+	with_test_drive(|_rx, _instance| unsafe {
 		let list = get_mount_point_list(false).unwrap();
 		assert_eq!(list.len(), 1);
 		let info = &list[0];
@@ -931,7 +953,7 @@ fn test_get_mount_point_list() {
 
 #[test]
 fn test_panic() {
-	with_test_drive(|_rx| unsafe {
+	with_test_drive(|_rx, _instance| unsafe {
 		let path = convert_str("Z:\\test_panic");
 		assert_eq!(
 			CreateFileW(
@@ -951,7 +973,7 @@ fn test_panic() {
 
 #[test]
 fn test_get_volume_information() {
-	with_test_drive(|_rx| unsafe {
+	with_test_drive(|_rx, _instance| unsafe {
 		let path = convert_str("Z:\\");
 		let mut volume_name = [0; MAX_PATH + 1];
 		let mut fs_name = [0; MAX_PATH + 1];
@@ -993,7 +1015,7 @@ fn test_get_volume_information() {
 
 #[test]
 fn test_get_disk_free_space() {
-	with_test_drive(|_rx| unsafe {
+	with_test_drive(|_rx, _instance| unsafe {
 		let path = convert_str("Z:\\");
 		let mut free_bytes_available = 0u64;
 		let mut total_number_of_bytes = 0u64;
@@ -1032,7 +1054,7 @@ fn open_file(path: impl AsRef<str>) -> HANDLE {
 
 #[test]
 fn test_create_file() {
-	with_test_drive(|rx| unsafe {
+	with_test_drive(|rx, _instance| unsafe {
 		let hf = open_file("Z:\\test_create_file");
 		assert_eq!(CloseHandle(hf), TRUE);
 		assert_eq!(
@@ -1050,7 +1072,7 @@ fn test_create_file() {
 
 #[test]
 fn test_close_file() {
-	with_test_drive(|rx| unsafe {
+	with_test_drive(|rx, _instance| unsafe {
 		let hf = open_file("Z:\\test_close_file");
 		assert_eq!(CloseHandle(hf), TRUE);
 		assert_eq!(rx.recv().unwrap(), HandlerSignal::Cleanup);
@@ -1061,7 +1083,7 @@ fn test_close_file() {
 
 #[test]
 fn test_file_io() {
-	with_test_drive(|rx| unsafe {
+	with_test_drive(|rx, _instance| unsafe {
 		let hf = open_file("Z:\\test_file_io");
 		let mut buf = [0u8; 255];
 		let mut len = 0;
@@ -1104,7 +1126,7 @@ fn test_file_io() {
 
 #[test]
 fn test_get_file_information() {
-	with_test_drive(|_rx| unsafe {
+	with_test_drive(|_rx, _instance| unsafe {
 		let hf = open_file("Z:\\test_get_file_information");
 		let mut info = mem::zeroed();
 		assert_eq!(GetFileInformationByHandle(hf, &mut info), TRUE);
@@ -1189,7 +1211,7 @@ fn check_dir_content(pattern: &str, file_name: &str) {
 
 #[test]
 fn test_find_files() {
-	with_test_drive(|rx| {
+	with_test_drive(|rx, _instance| {
 		check_dir_content("Z:\\test_find_files\\*", "test_inner_file");
 		check_dir_content(
 			"Z:\\test_find_files_with_pattern\\*",
@@ -1204,7 +1226,7 @@ fn test_find_files() {
 
 #[test]
 fn test_set_file_attributes() {
-	with_test_drive(|rx| unsafe {
+	with_test_drive(|rx, _instance| unsafe {
 		let path = convert_str("Z:\\test_set_file_attributes");
 		assert_eq!(
 			SetFileAttributesW(path.as_ptr(), FILE_ATTRIBUTE_READONLY),
@@ -1219,7 +1241,7 @@ fn test_set_file_attributes() {
 
 #[test]
 fn test_set_file_time() {
-	with_test_drive(|rx| unsafe {
+	with_test_drive(|rx, _instance| unsafe {
 		let hf = open_file("Z:\\test_set_file_time");
 		let ctime = UNIX_EPOCH;
 		let atime = UNIX_EPOCH + Duration::from_secs(1);
@@ -1267,7 +1289,7 @@ fn test_set_file_time() {
 
 #[test]
 fn test_delete_file() {
-	with_test_drive(|rx| unsafe {
+	with_test_drive(|rx, _instance| unsafe {
 		let path = convert_str("Z:\\test_delete_file");
 		assert_eq!(DeleteFileW(path.as_ptr()), TRUE);
 		assert_eq!(rx.recv().unwrap(), HandlerSignal::DeleteFile(true));
@@ -1276,7 +1298,7 @@ fn test_delete_file() {
 
 #[test]
 fn test_delete_directory() {
-	with_test_drive(|rx| unsafe {
+	with_test_drive(|rx, _instance| unsafe {
 		let path = convert_str("Z:\\test_delete_directory");
 		assert_eq!(RemoveDirectoryW(path.as_ptr()), TRUE);
 		assert_eq!(rx.recv().unwrap(), HandlerSignal::DeleteDirectory(true));
@@ -1285,7 +1307,7 @@ fn test_delete_directory() {
 
 #[test]
 fn test_move_file() {
-	with_test_drive(|rx| unsafe {
+	with_test_drive(|rx, _instance| unsafe {
 		let path = convert_str("Z:\\test_move_file");
 		let new_path = convert_str("Z:\\test_move_file_new");
 		assert_eq!(
@@ -1301,7 +1323,7 @@ fn test_move_file() {
 
 #[test]
 fn test_set_end_of_file() {
-	with_test_drive(|rx| unsafe {
+	with_test_drive(|rx, _instance| unsafe {
 		let hf = open_file("Z:\\test_set_end_of_file");
 		assert_eq!(SetFileValidData(hf, i64::MAX), TRUE);
 		assert_eq!(rx.recv().unwrap(), HandlerSignal::SetEndOfFile(i64::MAX));
@@ -1311,7 +1333,7 @@ fn test_set_end_of_file() {
 
 #[test]
 fn test_set_allocation_size() {
-	with_test_drive(|rx| unsafe {
+	with_test_drive(|rx, _instance| unsafe {
 		let hf = open_file("Z:\\test_set_allocation_size");
 		let dist_low = 42;
 		let mut dist_high = 42;
@@ -1328,7 +1350,7 @@ fn test_set_allocation_size() {
 
 #[test]
 fn test_lock_unlock_file() {
-	with_test_drive(|rx| unsafe {
+	with_test_drive(|rx, _instance| unsafe {
 		let hf = open_file("Z:\\test_lock_unlock_file");
 		assert_eq!(LockFile(hf, 0, 0, 1, 0), TRUE);
 		assert_eq!(rx.recv().unwrap(), HandlerSignal::LockFile(0, 1));
@@ -1340,7 +1362,7 @@ fn test_lock_unlock_file() {
 
 #[test]
 fn test_get_file_security() {
-	with_test_drive(|rx| unsafe {
+	with_test_drive(|rx, _instance| unsafe {
 		let expected_desc = create_test_descriptor();
 		let path = convert_str("Z:\\test_get_file_security");
 		let mut desc_len = 0;
@@ -1381,7 +1403,7 @@ fn test_get_file_security() {
 
 #[test]
 fn test_get_file_security_overflow() {
-	with_test_drive(|_rx| unsafe {
+	with_test_drive(|_rx, _instance| unsafe {
 		let path = convert_str("Z:\\test_get_file_security_overflow");
 		let mut ret_len = 0;
 		assert_eq!(
@@ -1401,7 +1423,7 @@ fn test_get_file_security_overflow() {
 
 #[test]
 fn test_set_file_security() {
-	with_test_drive(|rx| unsafe {
+	with_test_drive(|rx, _instance| unsafe {
 		let path = convert_str("Z:\\test_set_file_security");
 		let mut desc = create_test_descriptor();
 		let desc_ptr = desc.as_mut_ptr() as PSECURITY_DESCRIPTOR;
@@ -1424,7 +1446,7 @@ fn test_set_file_security() {
 
 #[test]
 fn test_find_streams() {
-	with_test_drive(|_rx| unsafe {
+	with_test_drive(|_rx, _instance| unsafe {
 		let path = convert_str("Z:\\test_find_streams");
 		let mut data = mem::zeroed::<WIN32_FIND_STREAM_DATA>();
 		let hf = FindFirstStreamW(
@@ -1448,7 +1470,7 @@ fn test_find_streams() {
 #[test]
 #[ignore]
 fn test_reset_timeout() {
-	with_test_drive(|_rx| unsafe {
+	with_test_drive(|_rx, _instance| unsafe {
 		let path = convert_str("Z:\\test_reset_timeout");
 		let hf = CreateFileW(
 			path.as_ptr(),
@@ -1466,7 +1488,7 @@ fn test_reset_timeout() {
 
 #[test]
 fn test_open_requester_token() {
-	with_test_drive(|rx| unsafe {
+	with_test_drive(|rx, _instance| unsafe {
 		let expected_info_buffer = get_current_user_info();
 		let hf = open_file("Z:\\test_open_requester_token");
 		assert_eq!(CloseHandle(hf), TRUE);
@@ -1483,7 +1505,7 @@ fn test_open_requester_token() {
 
 #[test]
 fn test_operation_info() {
-	with_test_drive(|rx| unsafe {
+	with_test_drive(|rx, _instance| unsafe {
 		let hf = open_file("Z:\\test_operation_info");
 		assert_eq!(CloseHandle(hf), TRUE);
 		assert_eq!(
@@ -1496,11 +1518,10 @@ fn test_operation_info() {
 				synchronous_io: false,
 				no_cache: false,
 				write_to_eof: false,
-				thread_count: 4,
+				single_thread: false,
 				mount_flags: MountFlags::CURRENT_SESSION
 					| MountFlags::FILELOCK_USER_MODE
-					| MountFlags::ALT_STREAM
-					| MountFlags::ENABLE_NOTIFICATION_API,
+					| MountFlags::ALT_STREAM,
 				mount_point: Some(convert_str("Z:\\")),
 				unc_name: None,
 				timeout: Duration::from_secs(15),
@@ -1513,7 +1534,7 @@ fn test_operation_info() {
 
 #[test]
 fn test_output_ptr_null() {
-	with_test_drive(|_rx| unsafe {
+	with_test_drive(|_rx, _instance| unsafe {
 		let path = convert_str("Z:\\");
 		assert_eq!(
 			GetDiskFreeSpaceExW(
@@ -1564,12 +1585,12 @@ extern "stdcall" fn failing_fill_data_stub(_data: *mut (), _info: PDOKAN_FILE_IN
 
 #[test]
 fn test_fill_data_error() {
-	let mut wrapper = fill_data_wrapper(fill_data_stub, ptr::null_mut());
+	let mut wrapper = fill_data_wrapper(fill_data_stub, ptr::null_mut(), 0);
 	assert_eq!(
 		wrapper(&ToRawStructStub { should_fail: true }),
 		Err(FillDataError::NameTooLong)
 	);
-	let mut wrapper = fill_data_wrapper(failing_fill_data_stub, ptr::null_mut());
+	let mut wrapper = fill_data_wrapper(failing_fill_data_stub, ptr::null_mut(), 0);
 	assert_eq!(
 		wrapper(&ToRawStructStub { should_fail: false }),
 		Err(FillDataError::BufferFull)
@@ -1676,7 +1697,7 @@ impl Iterator for DirectoryChangeIterator {
 
 #[test]
 fn test_notify() {
-	with_test_drive(|_rx| {
+	with_test_drive(|_rx, instance| {
 		let (tx, rx) = mpsc::channel();
 		let handle = thread::spawn(move || {
 			let mut iter = DirectoryChangeIterator::new(convert_str("Z:\\"));
@@ -1687,24 +1708,36 @@ fn test_notify() {
 			}
 		});
 		assert_eq!(rx.recv().unwrap(), None);
-		assert!(notify_create(convert_str("Z:\\test_notify_create"), false));
+		assert!(notify_create(
+			instance,
+			convert_str("Z:\\test_notify_create"),
+			false
+		));
 		assert_eq!(
 			rx.recv().unwrap(),
 			Some((FILE_ACTION_ADDED, convert_str("test_notify_create")))
 		);
-		assert!(notify_delete(convert_str("Z:\\test_notify_delete"), false));
+		assert!(notify_delete(
+			instance,
+			convert_str("Z:\\test_notify_delete"),
+			false
+		));
 		assert_eq!(
 			rx.recv().unwrap(),
 			Some((FILE_ACTION_REMOVED, convert_str("test_notify_delete")))
 		);
-		assert!(notify_update(convert_str("Z:\\test_notify_update")));
+		assert!(notify_update(
+			instance,
+			convert_str("Z:\\test_notify_update")
+		));
 		assert_eq!(
 			rx.recv().unwrap(),
 			Some((FILE_ACTION_MODIFIED, convert_str("test_notify_update")))
 		);
-		assert!(notify_xattr_update(convert_str(
-			"Z:\\test_notify_xattr_update"
-		)));
+		assert!(notify_xattr_update(
+			instance,
+			convert_str("Z:\\test_notify_xattr_update")
+		));
 		assert_eq!(
 			rx.recv().unwrap(),
 			Some((
@@ -1713,6 +1746,7 @@ fn test_notify() {
 			))
 		);
 		assert!(notify_rename(
+			instance,
 			convert_str("Z:\\test_notify_rename_old"),
 			convert_str("Z:\\test_notify_rename_new"),
 			false,

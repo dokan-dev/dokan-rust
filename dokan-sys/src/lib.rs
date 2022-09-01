@@ -17,7 +17,7 @@ use libc::c_int;
 use winapi::shared::basetsd::ULONG64;
 use winapi::shared::minwindef::{BOOL, DWORD, FILETIME, LPCVOID, LPDWORD, LPVOID, MAX_PATH};
 use winapi::shared::ntdef::{
-	BOOLEAN, HANDLE, LONGLONG, LPCWSTR, LPWSTR, NTSTATUS, PULONG, PULONGLONG, PVOID64, UCHAR,
+	BOOLEAN, HANDLE, LONGLONG, LPCWSTR, LPWSTR, NTSTATUS, PULONG, PULONGLONG, PVOID, SCHAR, UCHAR,
 	ULONG, UNICODE_STRING, USHORT, WCHAR,
 };
 use winapi::um::fileapi::LPBY_HANDLE_FILE_INFORMATION;
@@ -30,26 +30,28 @@ pub mod win32;
 
 include!(concat!(env!("OUT_DIR"), "/version.rs"));
 
-pub const DOKAN_OPTION_DEBUG: ULONG = 1;
-pub const DOKAN_OPTION_STDERR: ULONG = 2;
-pub const DOKAN_OPTION_ALT_STREAM: ULONG = 4;
-pub const DOKAN_OPTION_WRITE_PROTECT: ULONG = 8;
-pub const DOKAN_OPTION_NETWORK: ULONG = 16;
-pub const DOKAN_OPTION_REMOVABLE: ULONG = 32;
-pub const DOKAN_OPTION_MOUNT_MANAGER: ULONG = 64;
-pub const DOKAN_OPTION_CURRENT_SESSION: ULONG = 128;
-pub const DOKAN_OPTION_FILELOCK_USER_MODE: ULONG = 256;
-pub const DOKAN_OPTION_ENABLE_NOTIFICATION_API: ULONG = 512;
-pub const DOKAN_OPTION_ENABLE_FCB_GARBAGE_COLLECTION: ULONG = 2048;
-pub const DOKAN_OPTION_CASE_SENSITIVE: ULONG = 4096;
-pub const DOKAN_OPTION_ENABLE_UNMOUNT_NETWORK_DRIVE: ULONG = 8192;
-pub const DOKAN_OPTION_DISPATCH_DRIVER_LOGS: ULONG = 16384;
+pub const DOKAN_OPTION_DEBUG: ULONG = 1 << 0;
+pub const DOKAN_OPTION_STDERR: ULONG = 1 << 1;
+pub const DOKAN_OPTION_ALT_STREAM: ULONG = 1 << 2;
+pub const DOKAN_OPTION_WRITE_PROTECT: ULONG = 1 << 3;
+pub const DOKAN_OPTION_NETWORK: ULONG = 1 << 4;
+pub const DOKAN_OPTION_REMOVABLE: ULONG = 1 << 5;
+pub const DOKAN_OPTION_MOUNT_MANAGER: ULONG = 1 << 6;
+pub const DOKAN_OPTION_CURRENT_SESSION: ULONG = 1 << 7;
+pub const DOKAN_OPTION_FILELOCK_USER_MODE: ULONG = 1 << 8;
+pub const DOKAN_OPTION_CASE_SENSITIVE: ULONG = 1 << 9;
+pub const DOKAN_OPTION_ENABLE_UNMOUNT_NETWORK_DRIVE: ULONG = 1 << 10;
+pub const DOKAN_OPTION_DISPATCH_DRIVER_LOGS: ULONG = 1 << 11;
+pub const DOKAN_OPTION_ALLOW_IPC_BATCHING: ULONG = 1 << 12;
+
+pub type DOKAN_HANDLE = *mut libc::c_void;
+pub type PDOKAN_HANDLE = *mut DOKAN_HANDLE;
 
 #[repr(C)]
 #[derive(Debug)]
 pub struct DOKAN_OPTIONS {
 	pub Version: USHORT,
-	pub ThreadCount: USHORT,
+	pub SingleThread: BOOLEAN,
 	pub Options: ULONG,
 	pub GlobalContext: ULONG64,
 	pub MountPoint: LPCWSTR,
@@ -57,6 +59,8 @@ pub struct DOKAN_OPTIONS {
 	pub Timeout: ULONG,
 	pub AllocationUnitSize: ULONG,
 	pub SectorSize: ULONG,
+	pub VolumeSecurityDescriptorLength: ULONG,
+	pub VolumeSecurityDescriptor: [SCHAR; 1024 * 16],
 }
 
 pub type PDOKAN_OPTIONS = *mut DOKAN_OPTIONS;
@@ -67,6 +71,7 @@ pub struct DOKAN_FILE_INFO {
 	pub Context: ULONG64,
 	pub DokanContext: ULONG64,
 	pub DokanOptions: PDOKAN_OPTIONS,
+	pub ProcessingContext: PVOID,
 	pub ProcessId: ULONG,
 	pub IsDirectory: UCHAR,
 	pub DeleteOnClose: UCHAR,
@@ -79,8 +84,7 @@ pub struct DOKAN_FILE_INFO {
 pub type PDOKAN_FILE_INFO = *mut DOKAN_FILE_INFO;
 
 pub type PFillFindData = unsafe extern "stdcall" fn(PWIN32_FIND_DATAW, PDOKAN_FILE_INFO) -> c_int;
-pub type PFillFindStreamData =
-	unsafe extern "stdcall" fn(PWIN32_FIND_STREAM_DATA, PDOKAN_FILE_INFO) -> c_int;
+pub type PFillFindStreamData = unsafe extern "stdcall" fn(PWIN32_FIND_STREAM_DATA, PVOID) -> BOOL;
 
 #[repr(C)]
 pub struct DOKAN_ACCESS_STATE {
@@ -246,7 +250,9 @@ pub struct DOKAN_OPERATIONS {
 			DokanFileInfo: PDOKAN_FILE_INFO,
 		) -> NTSTATUS,
 	>,
-	pub Mounted: Option<extern "stdcall" fn(DokanFileInfo: PDOKAN_FILE_INFO) -> NTSTATUS>,
+	pub Mounted: Option<
+		extern "stdcall" fn(MountPoint: LPCWSTR, DokanFileInfo: PDOKAN_FILE_INFO) -> NTSTATUS,
+	>,
 	pub Unmounted: Option<extern "stdcall" fn(DokanFileInfo: PDOKAN_FILE_INFO) -> NTSTATUS>,
 	pub GetFileSecurity: Option<
 		extern "stdcall" fn(
@@ -271,6 +277,7 @@ pub struct DOKAN_OPERATIONS {
 		extern "stdcall" fn(
 			FileName: LPCWSTR,
 			FillFindStreamData: PFillFindStreamData,
+			FindStreamContext: PVOID,
 			DokanFileInfo: PDOKAN_FILE_INFO,
 		) -> NTSTATUS,
 	>,
@@ -288,19 +295,32 @@ pub const DOKAN_MOUNT_POINT_ERROR: c_int = -6;
 pub const DOKAN_VERSION_ERROR: c_int = -7;
 
 #[repr(C)]
-pub struct DOKAN_CONTROL {
+pub struct DOKAN_MOUNT_POINT_INFO {
 	pub Type: ULONG,
 	pub MountPoint: [WCHAR; MAX_PATH],
 	pub UNCName: [WCHAR; 64],
 	pub DeviceName: [WCHAR; 64],
-	pub VolumeDeviceObject: PVOID64,
 	pub SessionId: ULONG,
+	pub MountOptions: ULONG,
 }
 
-pub type PDOKAN_CONTROL = *mut DOKAN_CONTROL;
+pub type PDOKAN_MOUNT_POINT_INFO = *mut DOKAN_MOUNT_POINT_INFO;
 
 extern "stdcall" {
+	pub fn DokanInit();
+	pub fn DokanShutdown();
 	pub fn DokanMain(DokanOptions: PDOKAN_OPTIONS, DokanOperations: PDOKAN_OPERATIONS) -> c_int;
+	pub fn DokanCreateFileSystem(
+		DokanOptions: PDOKAN_OPTIONS,
+		DokanOperations: PDOKAN_OPERATIONS,
+		DokanInstance: *mut DOKAN_HANDLE,
+	) -> c_int;
+	pub fn DokanIsFileSystemRunning(DokanInstance: DOKAN_HANDLE) -> BOOL;
+	pub fn DokanWaitForFileSystemClosed(
+		DokanInstance: DOKAN_HANDLE,
+		dwMilliseconds: DWORD,
+	) -> DWORD;
+	pub fn DokanCloseHandle(DokanInstance: DOKAN_HANDLE);
 	pub fn DokanUnmount(DriveLetter: WCHAR) -> BOOL;
 	pub fn DokanRemoveMountPoint(MountPoint: LPCWSTR) -> BOOL;
 	pub fn DokanIsNameInExpression(Expression: LPCWSTR, Name: LPCWSTR, IgnoreCase: BOOL) -> BOOL;
@@ -308,8 +328,8 @@ extern "stdcall" {
 	pub fn DokanDriverVersion() -> ULONG;
 	pub fn DokanResetTimeout(Timeout: ULONG, DokanFileInfo: PDOKAN_FILE_INFO) -> BOOL;
 	pub fn DokanOpenRequestorToken(DokanFileInfo: PDOKAN_FILE_INFO) -> HANDLE;
-	pub fn DokanGetMountPointList(uncOnly: BOOL, nbRead: PULONG) -> PDOKAN_CONTROL;
-	pub fn DokanReleaseMountPointList(list: PDOKAN_CONTROL);
+	pub fn DokanGetMountPointList(uncOnly: BOOL, nbRead: PULONG) -> PDOKAN_MOUNT_POINT_INFO;
+	pub fn DokanReleaseMountPointList(list: PDOKAN_MOUNT_POINT_INFO);
 	pub fn DokanMapKernelToUserCreateFileFlags(
 		DesiredAccess: ACCESS_MASK,
 		FileAttributes: ULONG,
@@ -319,11 +339,20 @@ extern "stdcall" {
 		outFileAttributesAndFlags: *mut DWORD,
 		outCreationDisposition: *mut DWORD,
 	);
-	pub fn DokanNotifyCreate(FilePath: LPCWSTR, IsDirectory: BOOL) -> BOOL;
-	pub fn DokanNotifyDelete(FilePath: LPCWSTR, IsDirectory: BOOL) -> BOOL;
-	pub fn DokanNotifyUpdate(FilePath: LPCWSTR) -> BOOL;
-	pub fn DokanNotifyXAttrUpdate(FilePath: LPCWSTR) -> BOOL;
+	pub fn DokanNotifyCreate(
+		DokanInstance: DOKAN_HANDLE,
+		FilePath: LPCWSTR,
+		IsDirectory: BOOL,
+	) -> BOOL;
+	pub fn DokanNotifyDelete(
+		DokanInstance: DOKAN_HANDLE,
+		FilePath: LPCWSTR,
+		IsDirectory: BOOL,
+	) -> BOOL;
+	pub fn DokanNotifyUpdate(DokanInstance: DOKAN_HANDLE, FilePath: LPCWSTR) -> BOOL;
+	pub fn DokanNotifyXAttrUpdate(DokanInstance: DOKAN_HANDLE, FilePath: LPCWSTR) -> BOOL;
 	pub fn DokanNotifyRename(
+		DokanInstance: DOKAN_HANDLE,
 		OldPath: LPCWSTR,
 		NewPath: LPCWSTR,
 		IsDirectory: BOOL,

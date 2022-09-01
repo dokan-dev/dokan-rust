@@ -1206,6 +1206,18 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for MemFsHandler {
 		})
 	}
 
+	fn mounted(
+		&'b self,
+		_mount_point: &U16CStr,
+		_info: &OperationInfo<'a, 'b, Self>,
+	) -> Result<(), OperationError> {
+		Ok(())
+	}
+
+	fn unmounted(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<(), OperationError> {
+		Ok(())
+	}
+
 	fn get_file_security(
 		&'b self,
 		_file_name: &U16CStr,
@@ -1284,12 +1296,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				.help("Mount point path."),
 		)
 		.arg(
-			Arg::with_name("thread_count")
+			Arg::with_name("single_thread")
 				.short("t")
-				.long("threads")
-				.takes_value(true)
-				.value_name("THREAD_COUNT")
-				.default_value("0")
+				.long("single-thread")
 				.help("Thread count. Use \"0\" to let Dokan choose it automatically."),
 		)
 		.arg(
@@ -1313,10 +1322,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	if matches.is_present("removable") {
 		flags |= MountFlags::REMOVABLE;
 	}
+
+	init();
+
 	Drive::new()
 		.mount_point(&mount_point)
-		.thread_count(matches.value_of("thread_count").unwrap().parse()?)
+		.single_thread(matches.is_present("single_thread"))
 		.flags(flags)
 		.mount(&MemFsHandler::new())?;
+
+	shutdown();
+
 	Ok(())
 }

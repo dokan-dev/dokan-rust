@@ -35,11 +35,11 @@ use std::{mem, panic, ptr, slice};
 
 use dokan_sys::{win32::*, *};
 use widestring::{U16CStr, U16CString};
-use winapi::ctypes::c_int;
+use winapi::shared::basetsd::ULONG64;
 use winapi::shared::minwindef::{
 	BOOL, DWORD, FALSE, FILETIME, LPCVOID, LPDWORD, LPVOID, MAX_PATH, PULONG, TRUE, ULONG,
 };
-use winapi::shared::ntdef::{HANDLE, LONGLONG, LPCWSTR, LPWSTR, NTSTATUS, PULONGLONG};
+use winapi::shared::ntdef::{HANDLE, LONGLONG, LPCWSTR, LPWSTR, NTSTATUS, PULONGLONG, PVOID};
 use winapi::shared::ntstatus::{
 	STATUS_BUFFER_OVERFLOW, STATUS_INTERNAL_ERROR, STATUS_NOT_IMPLEMENTED,
 	STATUS_OBJECT_NAME_COLLISION, STATUS_SUCCESS,
@@ -47,6 +47,7 @@ use winapi::shared::ntstatus::{
 use winapi::um::fileapi::{BY_HANDLE_FILE_INFORMATION, LPBY_HANDLE_FILE_INFORMATION};
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::minwinbase::WIN32_FIND_DATAW;
+use winapi::um::winbase::INFINITE;
 use winapi::um::winnt::{ACCESS_MASK, PSECURITY_DESCRIPTOR, PSECURITY_INFORMATION};
 
 pub use dokan_sys::{DOKAN_IO_SECURITY_CONTEXT, PDOKAN_IO_SECURITY_CONTEXT};
@@ -59,6 +60,21 @@ pub use dokan_sys::DOKAN_MAJOR_API_VERSION as MAJOR_API_VERSION;
 pub use dokan_sys::DOKAN_NP_NAME as NP_NAME;
 /// The version of Dokan that this wrapper is targeting.
 pub use dokan_sys::DOKAN_VERSION as WRAPPER_VERSION;
+
+/// Initialize all required Dokan internal resources.
+///
+/// This needs to be called only once before trying to use other functions for the first time.
+/// Otherwise they will fail and raise an exception.
+pub fn init() {
+	unsafe { DokanInit() }
+}
+
+/// Release all allocated resources by \ref DokanInit when they are no longer needed.
+///
+/// This should be called when the application no longer expects to create a new FileSystem and after all devices are unmount.
+pub fn shutdown() {
+	unsafe { DokanShutdown() }
+}
 
 /// Gets version of the loaded Dokan library.
 ///
@@ -180,7 +196,7 @@ pub struct MountPointInfo {
 }
 
 struct MountPointListWrapper {
-	list_ptr: PDOKAN_CONTROL,
+	list_ptr: PDOKAN_MOUNT_POINT_INFO,
 }
 
 impl Drop for MountPointListWrapper {
@@ -245,32 +261,40 @@ pub fn get_mount_point_list(unc_only: bool) -> Option<Vec<MountPointInfo>> {
 ///
 /// Returns `true` on success.
 #[must_use]
-pub fn notify_create(path: impl AsRef<U16CStr>, is_dir: bool) -> bool {
-	unsafe { DokanNotifyCreate(path.as_ref().as_ptr(), is_dir.into()) == TRUE }
+pub fn notify_create(
+	dokan_instance: DOKAN_HANDLE,
+	path: impl AsRef<U16CStr>,
+	is_dir: bool,
+) -> bool {
+	unsafe { DokanNotifyCreate(dokan_instance, path.as_ref().as_ptr(), is_dir.into()) == TRUE }
 }
 
 /// Notifies Dokan that a file or directory has been deleted.
 ///
 /// Returns `true` on success.
 #[must_use]
-pub fn notify_delete(path: impl AsRef<U16CStr>, is_dir: bool) -> bool {
-	unsafe { DokanNotifyDelete(path.as_ref().as_ptr(), is_dir.into()) == TRUE }
+pub fn notify_delete(
+	dokan_instance: DOKAN_HANDLE,
+	path: impl AsRef<U16CStr>,
+	is_dir: bool,
+) -> bool {
+	unsafe { DokanNotifyDelete(dokan_instance, path.as_ref().as_ptr(), is_dir.into()) == TRUE }
 }
 
 /// Notifies Dokan that attributes of a file or directory has been changed.
 ///
 /// Returns `true` on success.
 #[must_use]
-pub fn notify_update(path: impl AsRef<U16CStr>) -> bool {
-	unsafe { DokanNotifyUpdate(path.as_ref().as_ptr()) == TRUE }
+pub fn notify_update(dokan_instance: DOKAN_HANDLE, path: impl AsRef<U16CStr>) -> bool {
+	unsafe { DokanNotifyUpdate(dokan_instance, path.as_ref().as_ptr()) == TRUE }
 }
 
 /// Notifies Dokan that extended attributes of a file or directory has been changed.
 ///
 /// Returns `true` on success.
 #[must_use]
-pub fn notify_xattr_update(path: impl AsRef<U16CStr>) -> bool {
-	unsafe { DokanNotifyXAttrUpdate(path.as_ref().as_ptr()) == TRUE }
+pub fn notify_xattr_update(dokan_instance: DOKAN_HANDLE, path: impl AsRef<U16CStr>) -> bool {
+	unsafe { DokanNotifyXAttrUpdate(dokan_instance, path.as_ref().as_ptr()) == TRUE }
 }
 
 /// Notifies Dokan that a file or directory has been renamed.
@@ -280,6 +304,7 @@ pub fn notify_xattr_update(path: impl AsRef<U16CStr>) -> bool {
 /// Returns `true` on success.
 #[must_use]
 pub fn notify_rename(
+	dokan_instance: DOKAN_HANDLE,
 	old_path: impl AsRef<U16CStr>,
 	new_path: impl AsRef<U16CStr>,
 	is_dir: bool,
@@ -287,6 +312,7 @@ pub fn notify_rename(
 ) -> bool {
 	unsafe {
 		DokanNotifyRename(
+			dokan_instance,
 			old_path.as_ref().as_ptr(),
 			new_path.as_ref().as_ptr(),
 			is_dir.into(),
@@ -379,15 +405,6 @@ bitflags! {
 		/// they will always fail and return `false`.
 		///
 		/// [`notify_create`]: fn.notify_create.html
-		const ENABLE_NOTIFICATION_API = DOKAN_OPTION_ENABLE_NOTIFICATION_API;
-
-		/// Enable garbage collection of file control blocks (FCB).
-		///
-		/// It prevents filter drivers (like anti-virus software) from exponentially slowing down certain operations due
-		/// to repeatedly rebuilding state that they attach to the FCB header.
-		const ENABLE_FCB_GARBAGE_COLLECTION = DOKAN_OPTION_ENABLE_FCB_GARBAGE_COLLECTION;
-
-		/// Enable case-sensitive file names.
 		const CASE_SENSITIVE = DOKAN_OPTION_CASE_SENSITIVE;
 
 		/// Allow unmounting network drives from Windows Explorer.
@@ -395,6 +412,11 @@ bitflags! {
 
 		/// Forward the kernel driver global and volume logs to the userland.
 		const DISPATCH_DRIVER_LOGS = DOKAN_OPTION_DISPATCH_DRIVER_LOGS;
+
+		/// Pull batches of events from the driver instead of a single one and execute them parallelly.
+		/// This option should only be used on computers with low cpu count
+		/// and userland filesystem taking time to process requests (like remote storage).
+		const ALLOW_IPC_BATCHING = DOKAN_OPTION_ALLOW_IPC_BATCHING;
 	}
 }
 
@@ -521,8 +543,8 @@ impl<'a, 'b: 'a, 'c: 'b, T: FileSystemHandler<'b, 'c> + 'c> OperationInfo<'b, 'c
 	}
 
 	/// Gets the number of threads used to handle file system operations.
-	pub fn thread_count(&self) -> u16 {
-		self.mount_options().ThreadCount
+	pub fn single_thread(&self) -> bool {
+		self.mount_options().SingleThread != 0
 	}
 
 	/// Gets flags that controls behavior of the mounted volume.
@@ -1328,7 +1350,11 @@ pub trait FileSystemHandler<'a, 'b: 'a>: Sync + Sized + 'b {
 	}
 
 	/// Called when Dokan has successfully mounted the volume.
-	fn mounted(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> Result<(), OperationError> {
+	fn mounted(
+		&'b self,
+		_mount_point: &U16CStr,
+		_info: &OperationInfo<'a, 'b, Self>,
+	) -> Result<(), OperationError> {
 		Err(OperationError::NtStatus(STATUS_NOT_IMPLEMENTED))
 	}
 
@@ -1394,13 +1420,14 @@ pub trait FileSystemHandler<'a, 'b: 'a>: Sync + Sized + 'b {
 	}
 }
 
-fn fill_data_wrapper<T, U: ToRawStruct<T>>(
-	fill_data: unsafe extern "stdcall" fn(*mut T, PDOKAN_FILE_INFO) -> c_int,
-	dokan_file_info: PDOKAN_FILE_INFO,
+fn fill_data_wrapper<T, U: ToRawStruct<T>, TArg: Copy, TResult: PartialEq>(
+	fill_data: unsafe extern "stdcall" fn(*mut T, TArg) -> TResult,
+	dokan_file_info: TArg,
+	success_value: TResult,
 ) -> impl FnMut(&U) -> Result<(), FillDataError> {
 	move |data| {
 		let mut ffi_data = data.to_raw_struct().ok_or(FillDataError::NameTooLong)?;
-		if unsafe { fill_data(&mut ffi_data, dokan_file_info) == 0 } {
+		if unsafe { fill_data(&mut ffi_data, dokan_file_info) == success_value } {
 			Ok(())
 		} else {
 			Err(FillDataError::BufferFull)
@@ -1569,7 +1596,7 @@ extern "stdcall" fn find_files<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 ) -> NTSTATUS {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let fill_wrapper = fill_data_wrapper::<_, FindData>(fill_find_data, dokan_file_info);
+		let fill_wrapper = fill_data_wrapper(fill_find_data, dokan_file_info, 0);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler()
 			.find_files(file_name, fill_wrapper, &info, info.context())
@@ -1587,7 +1614,7 @@ extern "stdcall" fn find_files_with_pattern<'a, 'b: 'a, T: FileSystemHandler<'a,
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
 		let search_pattern = U16CStr::from_ptr_str(search_pattern);
-		let fill_wrapper = fill_data_wrapper(fill_find_data, dokan_file_info);
+		let fill_wrapper = fill_data_wrapper(fill_find_data, dokan_file_info, 0);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler()
 			.find_files_with_pattern(
@@ -1854,28 +1881,26 @@ extern "stdcall" fn get_volume_information<'a, 'b: 'a, T: FileSystemHandler<'a, 
 	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
-// Same rationale as lock_unlock_file.
-fn mounted_unmounted<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
+extern "stdcall" fn mounted<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
+	mount_point: LPCWSTR,
 	dokan_file_info: PDOKAN_FILE_INFO,
-	func: fn(&'b T, &OperationInfo<'a, 'b, T>) -> Result<(), OperationError>,
 ) -> NTSTATUS {
-	panic::catch_unwind(|| {
+	panic::catch_unwind(|| unsafe {
+		let mount_point = U16CStr::from_ptr_str(mount_point);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
-		func(info.handler(), &info).ntstatus()
+		info.handler().mounted(mount_point, &info).ntstatus()
 	})
 	.unwrap_or(STATUS_INTERNAL_ERROR)
-}
-
-extern "stdcall" fn mounted<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
-	dokan_file_info: PDOKAN_FILE_INFO,
-) -> NTSTATUS {
-	mounted_unmounted(dokan_file_info, T::mounted)
 }
 
 extern "stdcall" fn unmounted<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
-	mounted_unmounted(dokan_file_info, T::unmounted)
+	panic::catch_unwind(|| {
+		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
+		info.handler().unmounted(&info).ntstatus()
+	})
+	.unwrap_or(STATUS_INTERNAL_ERROR)
 }
 
 extern "stdcall" fn get_file_security<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
@@ -1938,11 +1963,12 @@ extern "stdcall" fn set_file_security<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> +
 extern "stdcall" fn find_streams<'a, 'b: 'a, T: FileSystemHandler<'a, 'b> + 'b>(
 	file_name: LPCWSTR,
 	fill_find_stream_data: PFillFindStreamData,
+	find_stream_context: PVOID,
 	dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
 	panic::catch_unwind(|| unsafe {
 		let file_name = U16CStr::from_ptr_str(file_name);
-		let fill_wrapper = fill_data_wrapper(fill_find_stream_data, dokan_file_info);
+		let fill_wrapper = fill_data_wrapper(fill_find_stream_data, find_stream_context, 1);
 		let info = OperationInfo::<'a, 'b, T>::new(dokan_file_info);
 		info.handler()
 			.find_streams(file_name, fill_wrapper, &info, info.context())
@@ -2012,7 +2038,7 @@ impl<'a> Drive<'a> {
 		Drive {
 			options: DOKAN_OPTIONS {
 				Version: WRAPPER_VERSION as u16,
-				ThreadCount: 0,
+				SingleThread: 0,
 				Options: 0,
 				GlobalContext: 0,
 				MountPoint: ptr::null(),
@@ -2020,14 +2046,16 @@ impl<'a> Drive<'a> {
 				Timeout: 0,
 				AllocationUnitSize: 0,
 				SectorSize: 0,
+				VolumeSecurityDescriptorLength: 0,
+				VolumeSecurityDescriptor: [0; 1024 * 16],
 			},
 			phantom: PhantomData,
 		}
 	}
 
 	/// Sets the number of threads used to handle file system operations.
-	pub fn thread_count(&mut self, value: u16) -> &mut Self {
-		self.options.ThreadCount = value;
+	pub fn single_thread(&mut self, value: bool) -> &mut Self {
+		self.options.SingleThread = value.into();
 		self
 	}
 
@@ -2084,7 +2112,7 @@ impl<'a> Drive<'a> {
 	pub fn mount<'b, 'c: 'b, T: FileSystemHandler<'b, 'c> + 'c>(
 		&mut self,
 		handler: &'c T,
-	) -> Result<(), MountError> {
+	) -> Result<MountHandle, MountError> {
 		let mut operations = DOKAN_OPERATIONS {
 			ZwCreateFile: Some(create_file::<'b, 'c, T>),
 			Cleanup: Some(cleanup::<'b, 'c, T>),
@@ -2112,12 +2140,44 @@ impl<'a> Drive<'a> {
 			SetFileSecurity: Some(set_file_security::<'b, 'c, T>),
 			FindStreams: Some(find_streams::<'b, 'c, T>),
 		};
+
 		self.options.GlobalContext = handler as *const _ as u64;
-		let result = unsafe { DokanMain(&mut self.options, &mut operations) };
-		self.options.GlobalContext = 0;
+
+		let mut instance: DOKAN_HANDLE = unsafe { mem::MaybeUninit::uninit().assume_init_mut() };
+		let result =
+			unsafe { DokanCreateFileSystem(&mut self.options, &mut operations, &mut instance) };
+
 		match result {
-			DOKAN_SUCCESS => Ok(()),
-			_ => unsafe { Err(mem::transmute(result)) },
+			DOKAN_SUCCESS => Ok(MountHandle {
+				instance,
+				global_context: &mut self.options.GlobalContext,
+			}),
+			_ => {
+				self.options.GlobalContext = 0;
+				unsafe { Err(mem::transmute(result)) }
+			}
+		}
+	}
+}
+
+#[derive(Debug, PartialEq)]
+pub struct MountHandle {
+	instance: DOKAN_HANDLE,
+	global_context: *mut ULONG64,
+}
+
+impl MountHandle {
+	pub fn instance(&self) -> DOKAN_HANDLE {
+		self.instance
+	}
+}
+
+impl Drop for MountHandle {
+	fn drop(&mut self) {
+		unsafe {
+			DokanWaitForFileSystemClosed(self.instance, INFINITE);
+			DokanCloseHandle(self.instance);
+			*self.global_context = 0;
 		}
 	}
 }

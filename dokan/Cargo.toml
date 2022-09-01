@@ -1,6 +1,6 @@
 [package]
 name = "dokan"
-version = "0.2.0+dokan150"
+version = "0.3.0+dokan205"
 authors = ["DDoSolitary <DDoSolitary@gmail.com>"]
 description = "Rust-friendly wrapper for Dokan (user mode file system library for Windows)"
 homepage = "https://dokan-dev.github.io"
@@ -16,7 +16,7 @@ edition = "2018"
 appveyor = { repository = "Liryna/dokan-rust" }
 
 [dependencies]
-dokan-sys =  { version = "= 0.2.0", path = "../dokan-sys" }
+dokan-sys =  { version = "= 0.3.0", path = "../dokan-sys" }
 bitflags = "1.2.1"
 widestring = "0.4.3"
 winapi = { version = "0.3.9", features = ["std", "errhandlingapi", "handleapi", "heapapi", "ioapiset", "minwinbase", "minwindef", "ntdef", "ntstatus", "processthreadsapi", "sddl", "securitybaseapi", "synchapi", "winbase", "winerror", "winnt"] }
