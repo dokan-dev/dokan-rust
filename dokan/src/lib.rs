@@ -40,7 +40,7 @@ use winapi::{
 		minwindef::{DWORD, FALSE, TRUE},
 		ntdef::NTSTATUS,
 	},
-	um::winnt::ACCESS_MASK,
+	um::{errhandlingapi::GetLastError, winnt::ACCESS_MASK},
 };
 
 pub use crate::{data::*, file_system::*, file_system_handler::*, notify::*};
@@ -142,8 +142,6 @@ fn test_is_name_in_expression() {
 }
 
 /// Converts Win32 error (e.g. returned by [`GetLastError`]) to [`NTSTATUS`].
-///
-/// [`GetLastError`]: winapi::um::errhandlingapi::GetLastError
 pub fn map_win32_error_to_ntstatus(error: DWORD) -> NTSTATUS {
 	unsafe { DokanNtStatusFromWin32(error) }
 }
@@ -156,6 +154,45 @@ fn can_map_win32_error_to_ntstatus() {
 		map_win32_error_to_ntstatus(ERROR_INTERNAL_ERROR),
 		STATUS_INTERNAL_ERROR
 	);
+}
+
+/// For convenience, returns an `Err(`[`NTSTATUS`]`)` from [`GetLastError`] if the condition is `false`.
+///
+/// It builds upon [`map_win32_error_to_ntstatus`].
+///
+/// **Warning**: success of some functions can only be known by checking `GetLastError`.
+/// In such cases, **do not use this function!**
+/// For instance, `ReadFile` and `WriteFile` in asynchronous mode are successful if they
+/// return `FALSE` and `GetLastError` returns `ERROR_IO_PENDING`.
+///
+/// # Example
+///
+/// ```
+/// # use std::ptr;
+/// #
+/// # use dokan::win32_ensure;
+/// # use widestring::U16CString;
+/// # use winapi::{shared::ntdef::NTSTATUS, um::processenv::GetCurrentDirectoryW};
+/// #
+/// fn get_current_directory() -> Result<U16CString, NTSTATUS> {
+/// 	unsafe {
+/// 		let len = GetCurrentDirectoryW(0, ptr::null_mut());
+/// 		win32_ensure(len != 0)?;
+///
+/// 		let mut buffer = Vec::with_capacity(len as usize);
+/// 		let actual_len = GetCurrentDirectoryW(len, buffer.as_mut_ptr());
+/// 		win32_ensure(actual_len != 0)?;
+/// 		assert_eq!(actual_len, len);
+///
+/// 		Ok(U16CString::from_vec_with_nul_unchecked(buffer))
+/// 	}
+/// }
+/// ```
+pub fn win32_ensure(condition: bool) -> Result<(), NTSTATUS> {
+	match condition {
+		true => Ok(()),
+		false => Err(map_win32_error_to_ntstatus(unsafe { GetLastError() })),
+	}
 }
 
 /// Flags returned by [`map_kernel_to_user_create_file_flags`].
