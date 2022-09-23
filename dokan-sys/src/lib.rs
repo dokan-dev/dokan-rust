@@ -7,24 +7,29 @@
 //!
 //! For more information, refer to corresponding items in [Dokan's documentation].
 //!
+//! Consider using the high-level [`dokan`] crate.
+//!
 //! [Dokan]: https://github.com/dokan-dev/dokany
 //! [Dokan's documentation]: https://dokan-dev.github.io/dokany-doc/html/
-
-extern crate libc;
-extern crate winapi;
+//! [`dokan`]: https://crates.io/crates/dokan
 
 use libc::c_int;
-use winapi::shared::basetsd::ULONG64;
-use winapi::shared::minwindef::{BOOL, DWORD, FILETIME, LPCVOID, LPDWORD, LPVOID, MAX_PATH};
-use winapi::shared::ntdef::{
-	BOOLEAN, HANDLE, LONGLONG, LPCWSTR, LPWSTR, NTSTATUS, PULONG, PULONGLONG, PVOID, SCHAR, UCHAR,
-	ULONG, UNICODE_STRING, USHORT, WCHAR,
-};
-use winapi::um::fileapi::LPBY_HANDLE_FILE_INFORMATION;
-use winapi::um::minwinbase::PWIN32_FIND_DATAW;
-use winapi::um::winnt::{ACCESS_MASK, PSECURITY_DESCRIPTOR, PSECURITY_INFORMATION};
-
 use win32::PWIN32_FIND_STREAM_DATA;
+use winapi::{
+	shared::{
+		basetsd::ULONG64,
+		minwindef::{BOOL, DWORD, FILETIME, LPCVOID, LPDWORD, LPVOID, MAX_PATH},
+		ntdef::{
+			BOOLEAN, HANDLE, LONGLONG, LPCWSTR, LPWSTR, NTSTATUS, PULONG, PULONGLONG, PVOID, SCHAR,
+			UCHAR, ULONG, UNICODE_STRING, USHORT, WCHAR,
+		},
+	},
+	um::{
+		fileapi::LPBY_HANDLE_FILE_INFORMATION,
+		minwinbase::PWIN32_FIND_DATAW,
+		winnt::{ACCESS_MASK, PSECURITY_DESCRIPTOR, PSECURITY_INFORMATION},
+	},
+};
 
 pub mod win32;
 
@@ -47,6 +52,8 @@ pub const DOKAN_OPTION_ALLOW_IPC_BATCHING: ULONG = 1 << 12;
 pub type DOKAN_HANDLE = *mut libc::c_void;
 pub type PDOKAN_HANDLE = *mut DOKAN_HANDLE;
 
+pub const VOLUME_SECURITY_DESCRIPTOR_MAX_SIZE: usize = 1024 * 16;
+
 #[repr(C)]
 #[derive(Debug)]
 pub struct DOKAN_OPTIONS {
@@ -60,7 +67,7 @@ pub struct DOKAN_OPTIONS {
 	pub AllocationUnitSize: ULONG,
 	pub SectorSize: ULONG,
 	pub VolumeSecurityDescriptorLength: ULONG,
-	pub VolumeSecurityDescriptor: [SCHAR; 1024 * 16],
+	pub VolumeSecurityDescriptor: [SCHAR; VOLUME_SECURITY_DESCRIPTOR_MAX_SIZE],
 }
 
 pub type PDOKAN_OPTIONS = *mut DOKAN_OPTIONS;

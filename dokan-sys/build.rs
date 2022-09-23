@@ -1,8 +1,9 @@
 extern crate cc;
 
-use std::env;
-use std::fs;
-use std::process::{Command, Stdio};
+use std::{
+	env, fs,
+	process::{Command, Stdio},
+};
 
 use cc::{Build, Tool};
 

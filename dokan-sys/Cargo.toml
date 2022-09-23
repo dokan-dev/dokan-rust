@@ -10,7 +10,7 @@ keywords = ["ffi", "dokan", "bindings", "driver", "filesystem"]
 categories = ["external-ffi-bindings"]
 readme = "README.md"
 license = "MIT"
-edition = "2018"
+edition = "2021"
 links = "dokan"
 build = "build.rs"
 
