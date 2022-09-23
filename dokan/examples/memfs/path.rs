@@ -1,11 +1,9 @@
-use std::borrow::Borrow;
-use std::sync::Arc;
+use std::{borrow::Borrow, sync::Arc};
 
-use dokan::OperationError;
+use dokan::OperationResult;
 use widestring::{U16CStr, U16Str, U16String};
 use winapi::shared::ntstatus::*;
 
-use crate::err_utils::*;
 use crate::{DirEntry, Entry, EntryName, EntryNameRef};
 
 // Use the same value as NTFS.
@@ -25,7 +23,7 @@ pub struct StreamInfo<'a> {
 }
 
 impl StreamInfo<'_> {
-	pub fn check_default(&self, is_dir: bool) -> Result<bool, OperationError> {
+	pub fn check_default(&self, is_dir: bool) -> OperationResult<bool> {
 		if is_dir {
 			if self.name.is_empty()
 				|| EntryNameRef::new(self.name) == EntryName(U16String::from_str("$I30")).borrow()
@@ -33,17 +31,17 @@ impl StreamInfo<'_> {
 				if self.type_ == StreamType::IndexAllocation {
 					Ok(true)
 				} else {
-					nt_res(STATUS_OBJECT_NAME_INVALID)
+					Err(STATUS_OBJECT_NAME_INVALID)
 				}
 			} else if self.type_ == StreamType::Data {
 				Ok(false)
 			} else {
-				nt_res(STATUS_OBJECT_NAME_INVALID)
+				Err(STATUS_OBJECT_NAME_INVALID)
 			}
 		} else if self.type_ == StreamType::Data {
 			Ok(self.name.is_empty())
 		} else {
-			nt_res(STATUS_OBJECT_NAME_INVALID)
+			Err(STATUS_OBJECT_NAME_INVALID)
 		}
 	}
 }
@@ -55,7 +53,7 @@ pub struct FullName<'a> {
 }
 
 impl<'a> FullName<'a> {
-	pub fn new(name: &'a U16Str) -> Result<Self, OperationError> {
+	pub fn new(name: &'a U16Str) -> OperationResult<Self> {
 		let name_slice = name.as_slice();
 		if let Some(offset1) = name_slice.iter().position(|x| *x == ':' as u16) {
 			let file_name = U16Str::from_slice(&name_slice[..offset1]);
@@ -74,7 +72,7 @@ impl<'a> FullName<'a> {
 				} else if stream_type_str == EntryName(U16String::from_str("$BITMAP")).borrow() {
 					StreamType::Bitmap
 				} else {
-					return nt_res(STATUS_OBJECT_NAME_INVALID);
+					return Err(STATUS_OBJECT_NAME_INVALID);
 				};
 				Ok(Self {
 					file_name,
@@ -101,13 +99,10 @@ impl<'a> FullName<'a> {
 	}
 }
 
-fn find_dir_entry(
-	cur_entry: &Arc<DirEntry>,
-	path: &[&U16Str],
-) -> Result<Arc<DirEntry>, OperationError> {
+fn find_dir_entry(cur_entry: &Arc<DirEntry>, path: &[&U16Str]) -> OperationResult<Arc<DirEntry>> {
 	if let Some(name) = path.get(0) {
 		if name.len() > MAX_COMPONENT_LENGTH as usize {
-			return nt_res(STATUS_OBJECT_NAME_INVALID);
+			return Err(STATUS_OBJECT_NAME_INVALID);
 		}
 		match cur_entry
 			.children
@@ -116,7 +111,7 @@ fn find_dir_entry(
 			.get(EntryNameRef::new(name))
 		{
 			Some(Entry::Directory(dir)) => find_dir_entry(dir, &path[1..]),
-			_ => nt_res(STATUS_OBJECT_PATH_NOT_FOUND),
+			_ => Err(STATUS_OBJECT_PATH_NOT_FOUND),
 		}
 	} else {
 		Ok(Arc::clone(cur_entry))
@@ -126,7 +121,7 @@ fn find_dir_entry(
 pub fn split_path<'a>(
 	root: &Arc<DirEntry>,
 	path: &'a U16CStr,
-) -> Result<Option<(FullName<'a>, Arc<DirEntry>)>, OperationError> {
+) -> OperationResult<Option<(FullName<'a>, Arc<DirEntry>)>> {
 	let path = path
 		.as_slice()
 		.split(|x| *x == '\\' as u16)
@@ -138,7 +133,7 @@ pub fn split_path<'a>(
 	} else {
 		let name = *path.iter().last().unwrap();
 		if name.len() > MAX_COMPONENT_LENGTH as usize {
-			return nt_res(STATUS_OBJECT_NAME_INVALID);
+			return Err(STATUS_OBJECT_NAME_INVALID);
 		}
 		Ok(Some((
 			FullName::new(name)?,

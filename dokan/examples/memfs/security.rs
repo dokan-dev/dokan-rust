@@ -1,11 +1,14 @@
-use std::pin::Pin;
-use std::{mem, ptr};
+use std::{mem, pin::Pin, ptr};
 
-use dokan::OperationError;
-use winapi::shared::{minwindef, ntdef, ntstatus::*, winerror};
-use winapi::um::{errhandlingapi, heapapi, securitybaseapi, winnt};
+use dokan::{map_win32_error_to_ntstatus, OperationResult};
+use winapi::{
+	shared::{minwindef, ntdef, ntstatus::*, winerror},
+	um::{errhandlingapi::GetLastError, heapapi, securitybaseapi, winnt},
+};
 
-use crate::err_utils::*;
+fn get_win32_last_error_as_operation_result<T>() -> OperationResult<T> {
+	unsafe { Err(map_win32_error_to_ntstatus(GetLastError())) }
+}
 
 #[derive(Debug)]
 struct PrivateObjectSecurity {
@@ -35,7 +38,7 @@ unsafe impl Sync for SecurityDescriptor {}
 
 unsafe impl Send for SecurityDescriptor {}
 
-fn get_well_known_sid(sid_type: winnt::WELL_KNOWN_SID_TYPE) -> Result<Box<[u8]>, OperationError> {
+fn get_well_known_sid(sid_type: winnt::WELL_KNOWN_SID_TYPE) -> OperationResult<Box<[u8]>> {
 	unsafe {
 		let mut sid =
 			vec![0u8; mem::size_of::<winnt::SID>() + mem::size_of::<u32>() * 7].into_boxed_slice();
@@ -49,12 +52,12 @@ fn get_well_known_sid(sid_type: winnt::WELL_KNOWN_SID_TYPE) -> Result<Box<[u8]>,
 		if ret == minwindef::TRUE {
 			Ok(sid)
 		} else {
-			win32_last_res()
+			get_win32_last_error_as_operation_result()
 		}
 	}
 }
 
-fn create_default_dacl() -> Result<Box<[u8]>, OperationError> {
+fn create_default_dacl() -> OperationResult<Box<[u8]>> {
 	unsafe {
 		let admins_sid = get_well_known_sid(winnt::WinBuiltinAdministratorsSid)?;
 		let system_sid = get_well_known_sid(winnt::WinLocalSystemSid)?;
@@ -74,7 +77,7 @@ fn create_default_dacl() -> Result<Box<[u8]>, OperationError> {
 			winnt::ACL_REVISION as u32,
 		);
 		if ret == minwindef::FALSE {
-			return win32_last_res();
+			return get_win32_last_error_as_operation_result();
 		}
 
 		let flags = (winnt::CONTAINER_INHERIT_ACE | winnt::OBJECT_INHERIT_ACE) as u32;
@@ -86,7 +89,7 @@ fn create_default_dacl() -> Result<Box<[u8]>, OperationError> {
 			admins_sid.as_ptr() as winnt::PSID,
 		);
 		if ret == minwindef::FALSE {
-			return win32_last_res();
+			return get_win32_last_error_as_operation_result();
 		}
 		let ret = securitybaseapi::AddAccessAllowedAceEx(
 			acl.as_mut_ptr() as winnt::PACL,
@@ -96,7 +99,7 @@ fn create_default_dacl() -> Result<Box<[u8]>, OperationError> {
 			system_sid.as_ptr() as winnt::PSID,
 		);
 		if ret == minwindef::FALSE {
-			return win32_last_res();
+			return get_win32_last_error_as_operation_result();
 		}
 		let ret = securitybaseapi::AddAccessAllowedAceEx(
 			acl.as_mut_ptr() as winnt::PACL,
@@ -109,7 +112,7 @@ fn create_default_dacl() -> Result<Box<[u8]>, OperationError> {
 			auth_sid.as_ptr() as winnt::PSID,
 		);
 		if ret == minwindef::FALSE {
-			return win32_last_res();
+			return get_win32_last_error_as_operation_result();
 		}
 		let ret = securitybaseapi::AddAccessAllowedAceEx(
 			acl.as_mut_ptr() as winnt::PACL,
@@ -119,7 +122,7 @@ fn create_default_dacl() -> Result<Box<[u8]>, OperationError> {
 			users_sid.as_ptr() as winnt::PSID,
 		);
 		if ret == minwindef::FALSE {
-			return win32_last_res();
+			return get_win32_last_error_as_operation_result();
 		}
 
 		Ok(acl)
@@ -139,12 +142,12 @@ impl SecurityDescriptor {
 		creator_desc: winnt::PSECURITY_DESCRIPTOR,
 		token: ntdef::HANDLE,
 		is_dir: bool,
-	) -> Result<Self, OperationError> {
+	) -> OperationResult<Self> {
 		unsafe {
 			if !creator_desc.is_null()
 				&& securitybaseapi::IsValidSecurityDescriptor(creator_desc) == minwindef::FALSE
 			{
-				return nt_res(STATUS_INVALID_PARAMETER);
+				return Err(STATUS_INVALID_PARAMETER);
 			}
 
 			let mut priv_desc = ptr::null_mut();
@@ -157,25 +160,25 @@ impl SecurityDescriptor {
 				&FILE_GENERIC_MAPPING as *const _ as *mut _,
 			);
 			if ret == minwindef::FALSE {
-				return win32_last_res();
+				return get_win32_last_error_as_operation_result();
 			}
 			let priv_desc = PrivateObjectSecurity::from_raw(priv_desc);
 
 			let heap = heapapi::GetProcessHeap();
 			if heap.is_null() {
-				return win32_last_res();
+				return get_win32_last_error_as_operation_result();
 			}
 			let len = securitybaseapi::GetSecurityDescriptorLength(priv_desc.value) as usize;
 			let buf = heapapi::HeapAlloc(heap, 0, len);
 			if buf.is_null() {
-				return win32_last_res();
+				return get_win32_last_error_as_operation_result();
 			}
 			ptr::copy_nonoverlapping(priv_desc.value as *const u8, buf as *mut _, len);
 			Ok(Self { desc_ptr: buf })
 		}
 	}
 
-	pub fn new_default() -> Result<Self, OperationError> {
+	pub fn new_default() -> OperationResult<Self> {
 		let owner_sid = Pin::new(get_well_known_sid(winnt::WinLocalSystemSid)?);
 		let group_sid = Pin::new(get_well_known_sid(winnt::WinLocalSystemSid)?);
 		let dacl = Pin::new(create_default_dacl()?);
@@ -188,7 +191,7 @@ impl SecurityDescriptor {
 				winnt::SECURITY_DESCRIPTOR_REVISION,
 			);
 			if ret == minwindef::FALSE {
-				return win32_last_res();
+				return get_win32_last_error_as_operation_result();
 			}
 
 			let ret = securitybaseapi::SetSecurityDescriptorOwner(
@@ -197,7 +200,7 @@ impl SecurityDescriptor {
 				minwindef::FALSE,
 			);
 			if ret == minwindef::FALSE {
-				return win32_last_res();
+				return get_win32_last_error_as_operation_result();
 			}
 			let ret = securitybaseapi::SetSecurityDescriptorGroup(
 				abs_desc_ptr,
@@ -205,7 +208,7 @@ impl SecurityDescriptor {
 				minwindef::FALSE,
 			);
 			if ret == minwindef::FALSE {
-				return win32_last_res();
+				return get_win32_last_error_as_operation_result();
 			}
 			let ret = securitybaseapi::SetSecurityDescriptorDacl(
 				abs_desc_ptr,
@@ -214,27 +217,27 @@ impl SecurityDescriptor {
 				minwindef::FALSE,
 			);
 			if ret == minwindef::FALSE {
-				return win32_last_res();
+				return get_win32_last_error_as_operation_result();
 			}
 
 			let mut len = 0;
 			let ret = securitybaseapi::MakeSelfRelativeSD(abs_desc_ptr, ptr::null_mut(), &mut len);
-			let err = errhandlingapi::GetLastError();
+			let err = GetLastError();
 			if ret != minwindef::FALSE || err != winerror::ERROR_INSUFFICIENT_BUFFER {
-				return Err(OperationError::Win32(err));
+				return Err(map_win32_error_to_ntstatus(err));
 			}
 
 			let heap = heapapi::GetProcessHeap();
 			if heap.is_null() {
-				return win32_last_res();
+				return get_win32_last_error_as_operation_result();
 			}
 			let buf = heapapi::HeapAlloc(heap, 0, len as usize);
 			if buf.is_null() {
-				return win32_last_res();
+				return get_win32_last_error_as_operation_result();
 			}
 			let ret = securitybaseapi::MakeSelfRelativeSD(abs_desc_ptr, buf, &mut len);
 			if ret == minwindef::FALSE {
-				return win32_last_res();
+				return get_win32_last_error_as_operation_result();
 			}
 			Ok(Self { desc_ptr: buf })
 		}
@@ -245,7 +248,7 @@ impl SecurityDescriptor {
 		sec_info: winnt::SECURITY_INFORMATION,
 		sec_desc: winnt::PSECURITY_DESCRIPTOR,
 		sec_desc_len: u32,
-	) -> Result<u32, OperationError> {
+	) -> OperationResult<u32> {
 		unsafe {
 			let len = securitybaseapi::GetSecurityDescriptorLength(self.desc_ptr);
 			if len > sec_desc_len {
@@ -263,7 +266,7 @@ impl SecurityDescriptor {
 			if ret == minwindef::TRUE {
 				Ok(len)
 			} else {
-				win32_last_res()
+				get_win32_last_error_as_operation_result()
 			}
 		}
 	}
@@ -272,10 +275,10 @@ impl SecurityDescriptor {
 		&mut self,
 		sec_info: winnt::SECURITY_INFORMATION,
 		sec_desc: winnt::PSECURITY_DESCRIPTOR,
-	) -> Result<(), OperationError> {
+	) -> OperationResult<()> {
 		unsafe {
 			if securitybaseapi::IsValidSecurityDescriptor(sec_desc) == minwindef::FALSE {
-				return nt_res(STATUS_INVALID_PARAMETER);
+				return Err(STATUS_INVALID_PARAMETER);
 			}
 
 			let ret = securitybaseapi::SetPrivateObjectSecurityEx(
@@ -289,7 +292,7 @@ impl SecurityDescriptor {
 			if ret == minwindef::TRUE {
 				Ok(())
 			} else {
-				win32_last_res()
+				get_win32_last_error_as_operation_result()
 			}
 		}
 	}
