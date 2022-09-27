@@ -49,8 +49,8 @@ install:
   - ps: $Env:PATH = "$Env:PATH;C:\Users\appveyor\.cargo\bin"
   - ps: |
       if ($Env:USE_INSTALLED_LIB -eq $true) {
-          $Env:DokanLibrary1_LibraryPath_x64 = "C:\Program Files\Dokan\DokanLibrary-2.0.5\lib\"
-          $Env:DokanLibrary1_LibraryPath_x86 = "C:\Program Files\Dokan\DokanLibrary-2.0.5\x86\lib\"
+          $Env:DokanLibrary2_LibraryPath_x64 = "C:\Program Files\Dokan\Dokan Library-2.0.5\lib\"
+          $Env:DokanLibrary2_LibraryPath_x86 = "C:\Program Files\Dokan\Dokan Library-2.0.5\x86\lib\"
       } else {
           rm C:\Windows\System32\dokan2.dll
           rm C:\Windows\SysWOW64\dokan2.dll
