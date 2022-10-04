@@ -3,6 +3,7 @@ branches:
     - master
 
 environment:
+  DOKAN_CONSOLE_DEBUG_LOG: 1
   RUST_BACKTRACE: 1
   AccessTokenDokanDoc:
     secure: Z5/daTZ6OJaDbslmhxSxxB6leKaqHTnTbISy153Y4cdJm/oTAbDHaofb9TqvKXV1

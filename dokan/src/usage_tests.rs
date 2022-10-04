@@ -866,6 +866,20 @@ impl<'a> TestDriveContext<'a> {
 	}
 }
 
+// Errors might happen on CICD only. To facilitate debugging, output debug messages on console.
+pub fn test_flags() -> MountFlags {
+	let mut flags =
+		MountFlags::CURRENT_SESSION | MountFlags::FILELOCK_USER_MODE | MountFlags::ALT_STREAM;
+
+	let enable_console_debug_log =
+		std::env::var_os("DOKAN_CONSOLE_DEBUG_LOG").map_or(false, |x| &x != "0");
+	if enable_console_debug_log {
+		flags = flags | MountFlags::DEBUG | MountFlags::STDERR;
+	}
+
+	flags
+}
+
 #[allow(unused_must_use)]
 pub fn with_test_drive<Scope: FnOnce(TestDriveContext)>(scope: Scope) {
 	let _guard = TEST_DRIVE_LOCK.lock();
@@ -883,9 +897,7 @@ pub fn with_test_drive<Scope: FnOnce(TestDriveContext)>(scope: Scope) {
 		let mount_point = convert_str("Z:\\");
 		let handler = TestHandler::new(tx_signal);
 		let options = MountOptions {
-			flags: MountFlags::CURRENT_SESSION
-				| MountFlags::FILELOCK_USER_MODE
-				| MountFlags::ALT_STREAM,
+			flags: test_flags(),
 			timeout: Duration::from_secs(15),
 			allocation_unit_size: 1024,
 			sector_size: 1024,
@@ -1482,9 +1494,7 @@ fn can_get_operation_info() {
 				no_cache: false,
 				write_to_eof: false,
 				single_thread: false,
-				mount_flags: MountFlags::CURRENT_SESSION
-					| MountFlags::FILELOCK_USER_MODE
-					| MountFlags::ALT_STREAM,
+				mount_flags: test_flags(),
 				mount_point: Some(convert_str("Z:\\")),
 				unc_name: None,
 				timeout: Duration::from_secs(15),
