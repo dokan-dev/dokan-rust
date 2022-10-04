@@ -15,9 +15,9 @@ use std::{
 
 use clap::{App, Arg};
 use dokan::{
-	init, shutdown, CreateFileInfo, DiskSpaceInfo, FileInfo, FileSystemHandler, FileSystemMounter,
-	FileTimeOperation, FillDataError, FillDataResult, FindData, FindStreamData, MountFlags,
-	MountOptions, OperationInfo, OperationResult, VolumeInfo, IO_SECURITY_CONTEXT,
+	init, shutdown, unmount, CreateFileInfo, DiskSpaceInfo, FileInfo, FileSystemHandler,
+	FileSystemMounter, FileTimeOperation, FillDataError, FillDataResult, FindData, FindStreamData,
+	MountFlags, MountOptions, OperationInfo, OperationResult, VolumeInfo, IO_SECURITY_CONTEXT,
 };
 use dokan_sys::win32::{
 	FILE_CREATE, FILE_DELETE_ON_CLOSE, FILE_DIRECTORY_FILE, FILE_MAXIMUM_DISPOSITION,
@@ -1332,7 +1332,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	init();
 
 	let mut mounter = FileSystemMounter::new(&handler, &mount_point, &options);
-	mounter.mount()?;
+
+	println!("File system will mount...");
+
+	let file_system = mounter.mount()?;
+
+	// Another thread can unmount the file system.
+	let mount_point = mount_point.clone();
+	ctrlc::set_handler(move || {
+		if unmount(&mount_point) {
+			println!("File system will unmount...")
+		} else {
+			eprintln!("Failed to unmount file system.");
+		}
+	})
+	.expect("failed to set Ctrl-C handler");
+
+	println!("File system is mounted, press Ctrl-C to unmount.");
+
+	drop(file_system);
+
+	println!("File system is unmounted.");
 
 	shutdown();
 
