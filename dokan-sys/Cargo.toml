@@ -1,6 +1,6 @@
 [package]
 name = "dokan-sys"
-version = "0.3.0+dokan205"
+version = "0.3.1+dokan206"
 authors = ["DDoSolitary <DDoSolitary@gmail.com>"]
 description = "Raw FFI bindings for Dokan (user mode file system library for Windows)"
 homepage = "https://dokan-dev.github.io"

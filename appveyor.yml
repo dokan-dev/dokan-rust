@@ -60,12 +60,12 @@ init:
 
 install:
   - ps: &download-dokany |
-      Invoke-WebRequest https://github.com/dokan-dev/dokany/releases/download/v2.0.5.1000/DokanSetup.exe -OutFile "$Env:TEMP\DokanSetup.exe"
+      Invoke-WebRequest https://github.com/dokan-dev/dokany/releases/download/v2.0.6.1000/DokanSetup.exe -OutFile "$Env:TEMP\DokanSetup.exe"
       Start-Process "$Env:TEMP\DokanSetup.exe" -ArgumentList '/quiet /norestart' -Wait
 
       if ($Env:USE_INSTALLED_LIB -eq $true) {
-          $Env:DokanLibrary2_LibraryPath_x64 = 'C:\Program Files\Dokan\Dokan Library-2.0.5\lib\'
-          $Env:DokanLibrary2_LibraryPath_x86 = 'C:\Program Files\Dokan\Dokan Library-2.0.5\x86\lib\'
+          $Env:DokanLibrary2_LibraryPath_x64 = 'C:\Program Files\Dokan\Dokan Library-2.0.6\lib\'
+          $Env:DokanLibrary2_LibraryPath_x86 = 'C:\Program Files\Dokan\Dokan Library-2.0.6\x86\lib\'
       } else {
           Remove-Item 'C:\Windows\System32\dokan2.dll'
           Remove-Item 'C:\Windows\SysWOW64\dokan2.dll'
