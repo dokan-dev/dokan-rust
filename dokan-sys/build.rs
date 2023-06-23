@@ -73,7 +73,7 @@ fn check_dokan_env(version_major: &str) -> bool {
 	}
 }
 
-fn build_dokan(compiler: &Tool, version_major: &str) {
+fn build_dokan(compiler: &Tool, version_major: &str, output_path: Option<String>) {
 	let out_dir = env::var("OUT_DIR").unwrap();
 	let src = fs::read_dir("src/dokany/dokan")
 		.unwrap()
@@ -121,7 +121,7 @@ fn build_dokan(compiler: &Tool, version_major: &str) {
 			))
 	};
 	assert!(compiler_cmd.output().unwrap().status.success());
-	if let Ok(output_path) = env::var("DOKAN_DLL_OUTPUT_PATH") {
+	if let Some(output_path) = &output_path {
 		fs::copy(dll_path, format!("{}/{}", output_path, dll_name)).unwrap();
 	}
 	println!("cargo:rerun-if-env-changed=DOKAN_DLL_OUTPUT_PATH");
@@ -144,7 +144,8 @@ fn main() {
 	);
 	let version_major = &version[..1];
 	println!("cargo:rustc-link-lib=dylib=dokan{}", version_major);
-	if !check_dokan_env(version_major) {
-		build_dokan(&compiler, version_major);
+	let output_path = env::var("DOKAN_DLL_OUTPUT_PATH").ok();
+	if !check_dokan_env(version_major) || output_path.is_some() {
+		build_dokan(&compiler, version_major, output_path);
 	};
 }
