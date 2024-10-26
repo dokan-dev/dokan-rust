@@ -184,7 +184,7 @@ fn can_map_win32_error_to_ntstatus() {
 /// 		win32_ensure(actual_len != 0)?;
 /// 		assert_eq!(actual_len, len);
 ///
-/// 		Ok(U16CString::from_vec_with_nul_unchecked(buffer))
+/// 		Ok(U16CString::from_vec_unchecked(buffer))
 /// 	}
 /// }
 /// ```

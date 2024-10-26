@@ -26,6 +26,7 @@ use crate::{file_system_handler::FileSystemHandler, operations, WRAPPER_VERSION}
 
 bitflags! {
 	/// Flags that control behavior of the mounted volume, as part of [`MountOptions`].
+	#[derive(Debug, Clone, Eq, PartialEq)]
 	pub struct MountFlags : u32 {
 		/// Enable debug message output.
 		const DEBUG = DOKAN_OPTION_DEBUG;
