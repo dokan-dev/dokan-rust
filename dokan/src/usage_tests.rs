@@ -1140,6 +1140,16 @@ fn check_dir_content(pattern: &str, file_name: &str) {
 		let hf = FindFirstFileW(pattern.as_ptr(), &mut data);
 		let ft_epoch = UNIX_EPOCH.to_filetime();
 		assert_ne_win32!(hf, INVALID_HANDLE_VALUE);
+		assert_eq!(
+			U16CStr::from_slice_truncate(&data.cFileName).unwrap(),
+			convert_str(".")
+		);
+		assert_eq_win32!(FindNextFileW(hf, &mut data), TRUE);
+		assert_eq!(
+			U16CStr::from_slice_truncate(&data.cFileName).unwrap(),
+			convert_str("..")
+		);
+		assert_eq_win32!(FindNextFileW(hf, &mut data), TRUE);
 		assert_eq!(data.dwFileAttributes, FILE_ATTRIBUTE_NORMAL);
 		assert_eq!(data.ftCreationTime.dwLowDateTime, ft_epoch.dwLowDateTime);
 		assert_eq!(data.ftCreationTime.dwHighDateTime, ft_epoch.dwHighDateTime);
@@ -1167,16 +1177,6 @@ fn check_dir_content(pattern: &str, file_name: &str) {
 		assert_eq!(
 			U16CStr::from_slice_truncate(&data.cAlternateFileName).unwrap(),
 			convert_str("")
-		);
-		assert_eq_win32!(FindNextFileW(hf, &mut data), TRUE);
-		assert_eq!(
-			U16CStr::from_slice_truncate(&data.cFileName).unwrap(),
-			convert_str("..")
-		);
-		assert_eq_win32!(FindNextFileW(hf, &mut data), TRUE);
-		assert_eq!(
-			U16CStr::from_slice_truncate(&data.cFileName).unwrap(),
-			convert_str(".")
 		);
 		assert_eq_win32!(FindNextFileW(hf, &mut data), FALSE);
 		assert_eq!(GetLastError(), ERROR_NO_MORE_FILES);
