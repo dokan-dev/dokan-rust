@@ -897,6 +897,7 @@ pub fn with_test_drive<Scope: FnOnce(TestDriveContext)>(scope: Scope) {
 		let mount_point = convert_str("Z:\\");
 		let handler = TestHandler::new(tx_signal);
 		let options = MountOptions {
+			single_thread: true,
 			flags: test_flags(),
 			timeout: Duration::from_secs(15),
 			allocation_unit_size: 1024,
@@ -1493,7 +1494,7 @@ fn can_get_operation_info() {
 				synchronous_io: false,
 				no_cache: false,
 				write_to_eof: false,
-				single_thread: false,
+				single_thread: true,
 				mount_flags: test_flags(),
 				mount_point: Some(convert_str("Z:\\")),
 				unc_name: None,
