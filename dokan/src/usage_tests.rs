@@ -897,6 +897,7 @@ pub fn with_test_drive<Scope: FnOnce(TestDriveContext)>(scope: Scope) {
 		let mount_point = convert_str("Z:\\");
 		let handler = TestHandler::new(tx_signal);
 		let options = MountOptions {
+			single_thread: true,
 			flags: test_flags(),
 			timeout: Duration::from_secs(15),
 			allocation_unit_size: 1024,
@@ -969,12 +970,12 @@ fn can_retrieve_volume_information() {
 			0
 		);
 		assert_eq!(
-			U16CStr::from_slice_with_nul(&volume_name).unwrap(),
-			convert_str("Test Drive").as_ref()
+			U16CStr::from_slice_truncate(&volume_name).unwrap(),
+			convert_str("Test Drive")
 		);
 		assert_eq!(
-			U16CStr::from_slice_with_nul(&fs_name).unwrap(),
-			convert_str("TESTFS").as_ref()
+			U16CStr::from_slice_truncate(&fs_name).unwrap(),
+			convert_str("TESTFS")
 		);
 		assert_eq!(serial_number, 1);
 		assert_eq!(max_component_length, 255);
@@ -1140,6 +1141,16 @@ fn check_dir_content(pattern: &str, file_name: &str) {
 		let hf = FindFirstFileW(pattern.as_ptr(), &mut data);
 		let ft_epoch = UNIX_EPOCH.to_filetime();
 		assert_ne_win32!(hf, INVALID_HANDLE_VALUE);
+		assert_eq!(
+			U16CStr::from_slice_truncate(&data.cFileName).unwrap(),
+			convert_str(".")
+		);
+		assert_eq_win32!(FindNextFileW(hf, &mut data), TRUE);
+		assert_eq!(
+			U16CStr::from_slice_truncate(&data.cFileName).unwrap(),
+			convert_str("..")
+		);
+		assert_eq_win32!(FindNextFileW(hf, &mut data), TRUE);
 		assert_eq!(data.dwFileAttributes, FILE_ATTRIBUTE_NORMAL);
 		assert_eq!(data.ftCreationTime.dwLowDateTime, ft_epoch.dwLowDateTime);
 		assert_eq!(data.ftCreationTime.dwHighDateTime, ft_epoch.dwHighDateTime);
@@ -1159,24 +1170,14 @@ fn check_dir_content(pattern: &str, file_name: &str) {
 		assert_eq!(data.nFileSizeLow, 2);
 		assert_eq!(data.nFileSizeHigh, 1);
 		assert_eq!(
-			U16CStr::from_slice_with_nul(&data.cFileName).unwrap(),
-			convert_str(file_name).as_ref()
+			U16CStr::from_slice_truncate(&data.cFileName).unwrap(),
+			convert_str(file_name)
 		);
 		assert_eq!(data.dwReserved0, 0);
 		assert_eq!(data.dwReserved1, 0);
 		assert_eq!(
-			U16CStr::from_slice_with_nul(&data.cAlternateFileName).unwrap(),
-			convert_str("").as_ref()
-		);
-		assert_eq_win32!(FindNextFileW(hf, &mut data), TRUE);
-		assert_eq!(
-			U16CStr::from_slice_with_nul(&data.cFileName).unwrap(),
-			convert_str("..").as_ref()
-		);
-		assert_eq_win32!(FindNextFileW(hf, &mut data), TRUE);
-		assert_eq!(
-			U16CStr::from_slice_with_nul(&data.cFileName).unwrap(),
-			convert_str(".").as_ref()
+			U16CStr::from_slice_truncate(&data.cAlternateFileName).unwrap(),
+			convert_str("")
 		);
 		assert_eq_win32!(FindNextFileW(hf, &mut data), FALSE);
 		assert_eq!(GetLastError(), ERROR_NO_MORE_FILES);
@@ -1433,8 +1434,8 @@ fn can_find_streams() {
 		assert_ne_win32!(hf, INVALID_HANDLE_VALUE);
 		assert_eq!(data.StreamSize.QuadPart(), &42);
 		assert_eq!(
-			U16CStr::from_slice_with_nul(&data.cStreamName).unwrap(),
-			convert_str("::$DATA").as_ref()
+			U16CStr::from_slice_truncate(&data.cStreamName).unwrap(),
+			convert_str("::$DATA")
 		);
 		assert_eq_win32!(FindNextStreamW(hf, &mut data as *mut _ as LPVOID), FALSE);
 		assert_eq!(GetLastError(), ERROR_HANDLE_EOF);
@@ -1493,7 +1494,7 @@ fn can_get_operation_info() {
 				synchronous_io: false,
 				no_cache: false,
 				write_to_eof: false,
-				single_thread: false,
+				single_thread: true,
 				mount_flags: test_flags(),
 				mount_point: Some(convert_str("Z:\\")),
 				unc_name: None,

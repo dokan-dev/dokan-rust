@@ -1,6 +1,6 @@
 [package]
 name = "dokan"
-version = "0.3.1+dokan206"
+version = "0.3.1+dokan220"
 authors = ["DDoSolitary <DDoSolitary@gmail.com>"]
 description = "Rust-friendly wrapper for Dokan (user mode file system library for Windows)"
 homepage = "https://dokan-dev.github.io"
@@ -16,17 +16,17 @@ edition = "2021"
 appveyor = { repository = "Liryna/dokan-rust" }
 
 [dependencies]
-bitflags = "1.2.1"
-dokan-sys = { version = "0.3.1", path = "../dokan-sys" }
-widestring = "0.4.3"
-winapi = { version = "0.3.9", features = ["std", "errhandlingapi", "handleapi", "heapapi", "ioapiset", "minwinbase", "minwindef", "ntdef", "ntstatus", "processthreadsapi", "sddl", "securitybaseapi", "synchapi", "winbase", "winerror", "winnt"] }
+bitflags = "2.6"
+dokan-sys = { path = "../dokan-sys" }
+widestring = "1.1"
+winapi = { version = "0.3", features = ["std", "errhandlingapi", "handleapi", "heapapi", "ioapiset", "minwinbase", "minwindef", "ntdef", "ntstatus", "processenv", "processthreadsapi", "sddl", "securitybaseapi", "synchapi", "winbase", "winerror", "winnt"] }
 
 [dev-dependencies]
-clap = "2.33.3"
-ctrlc = "3.2.3"
-lazy_static = "1.4.0"
-parking_lot = "0.11.1"
-regex = "1.4.3"
+clap = "4.5"
+ctrlc = "3.4"
+lazy_static = "1.5"
+parking_lot = "0.12"
+regex = "1.11"
 
 [package.metadata.docs.rs]
 default-target = "x86_64-pc-windows-msvc"

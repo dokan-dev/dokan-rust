@@ -27,7 +27,10 @@ use winapi::{
 	um::{
 		fileapi::LPBY_HANDLE_FILE_INFORMATION,
 		minwinbase::PWIN32_FIND_DATAW,
-		winnt::{ACCESS_MASK, PSECURITY_DESCRIPTOR, PSECURITY_INFORMATION},
+		winnt::{
+			ACCESS_MASK, PHANDLE, PSECURITY_DESCRIPTOR, PSECURITY_INFORMATION,
+			WAITORTIMERCALLBACKFUNC,
+		},
 	},
 };
 
@@ -320,13 +323,24 @@ extern "stdcall" {
 	pub fn DokanCreateFileSystem(
 		DokanOptions: PDOKAN_OPTIONS,
 		DokanOperations: PDOKAN_OPERATIONS,
-		DokanInstance: *mut DOKAN_HANDLE,
+		DokanInstance: PDOKAN_HANDLE,
 	) -> c_int;
 	pub fn DokanIsFileSystemRunning(DokanInstance: DOKAN_HANDLE) -> BOOL;
 	pub fn DokanWaitForFileSystemClosed(
 		DokanInstance: DOKAN_HANDLE,
 		dwMilliseconds: DWORD,
 	) -> DWORD;
+	pub fn DokanRegisterWaitForFileSystemClosed(
+		DokanInstance: DOKAN_HANDLE,
+		WaitHandle: PHANDLE,
+		Callback: WAITORTIMERCALLBACKFUNC,
+		Context: PVOID,
+		dwMilliseconds: ULONG,
+	) -> BOOL;
+	pub fn DokanUnregisterWaitForFileSystemClosed(
+		WaitHandle: HANDLE,
+		WaitForCallbacks: BOOL,
+	) -> BOOL;
 	pub fn DokanCloseHandle(DokanInstance: DOKAN_HANDLE);
 	pub fn DokanUnmount(DriveLetter: WCHAR) -> BOOL;
 	pub fn DokanRemoveMountPoint(MountPoint: LPCWSTR) -> BOOL;

@@ -13,7 +13,7 @@ use std::{
 	time::SystemTime,
 };
 
-use clap::{App, Arg};
+use clap::{Arg, ArgAction, Command};
 use dokan::{
 	init, shutdown, unmount, CreateFileInfo, DiskSpaceInfo, FileInfo, FileSystemHandler,
 	FileSystemMounter, FileTimeOperation, FillDataError, FillDataResult, FindData, FindStreamData,
@@ -1280,49 +1280,52 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-	let matches = App::new("dokan-rust memfs example")
+	let matches = Command::new("dokan-rust memfs example")
 		.author(env!("CARGO_PKG_AUTHORS"))
 		.arg(
-			Arg::with_name("mount_point")
-				.short("m")
+			Arg::new("mount_point")
+				.short('m')
 				.long("mount-point")
-				.takes_value(true)
+                .num_args(1)
 				.value_name("MOUNT_POINT")
 				.required(true)
 				.help("Mount point path."),
 		)
 		.arg(
-			Arg::with_name("single_thread")
-				.short("t")
+			Arg::new("single_thread")
+				.short('t')
 				.long("single-thread")
-				.help("Force a single thread. Otherwise Dokan will allocate the number of threads regarding the workload."),
+				.help("Force a single thread. Otherwise Dokan will allocate the number of threads regarding the workload.")
+				.action(ArgAction::SetTrue),
 		)
 		.arg(
-			Arg::with_name("dokan_debug")
-				.short("d")
+			Arg::new("dokan_debug")
+				.short('d')
 				.long("dokan-debug")
-				.help("Enable Dokan's debug output."),
+				.help("Enable Dokan's debug output.")
+				.action(ArgAction::SetTrue),
 		)
 		.arg(
-			Arg::with_name("removable")
-				.short("r")
+			Arg::new("removable")
+				.short('r')
 				.long("removable")
-				.help("Mount as a removable drive."),
+				.help("Mount as a removable drive.")
+				.action(ArgAction::SetTrue),
 		)
 		.get_matches();
 
-	let mount_point = U16CString::from_str(matches.value_of("mount_point").unwrap())?;
+	let mount_point = U16CString::from_str(matches.get_one::<String>("mount_point").unwrap())?;
 
 	let mut flags = MountFlags::ALT_STREAM;
-	if matches.is_present("dokan_debug") {
+	if matches.get_flag("dokan_debug") {
 		flags |= MountFlags::DEBUG | MountFlags::STDERR;
 	}
-	if matches.is_present("removable") {
+	if matches.get_flag("removable") {
 		flags |= MountFlags::REMOVABLE;
 	}
 
 	let options = MountOptions {
-		single_thread: matches.is_present("single_thread"),
+		single_thread: matches.get_flag("single_thread"),
 		flags,
 		..Default::default()
 	};

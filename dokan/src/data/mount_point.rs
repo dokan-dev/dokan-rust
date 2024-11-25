@@ -47,20 +47,20 @@ impl<'a> From<&'a DOKAN_MOUNT_POINT_INFO> for MountPointInfo<'a> {
 		let mount_point = if info.MountPoint[0] == 0 {
 			None
 		} else {
-			Some(U16CStr::from_slice_with_nul(&info.MountPoint).unwrap())
+			Some(U16CStr::from_slice_truncate(&info.MountPoint).unwrap())
 		};
 
 		let unc_name = if info.UNCName[0] == 0 {
 			None
 		} else {
-			Some(U16CStr::from_slice_with_nul(&info.UNCName).unwrap())
+			Some(U16CStr::from_slice_truncate(&info.UNCName).unwrap())
 		};
 
 		MountPointInfo {
 			device_type: info.Type.into(),
 			mount_point,
 			unc_name,
-			device_name: U16CStr::from_slice_with_nul(&info.DeviceName).unwrap(),
+			device_name: U16CStr::from_slice_truncate(&info.DeviceName).unwrap(),
 			session_id: info.SessionId,
 		}
 	}
