@@ -496,8 +496,12 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 		let delete_on_close = create_options & FILE_DELETE_ON_CLOSE > 0;
 		let path_info = path::split_path(&self.root, file_name)?;
 		if let Some((name, parent)) = path_info {
-			if create_options & FILE_DIRECTORY_FILE > 0 && name.stream_info.is_some() {
-				Err(STATUS_NOT_A_DIRECTORY)?;
+			if create_options & FILE_DIRECTORY_FILE > 0 {
+				if let Some(stream_info) = &name.stream_info {
+					if !stream_info.check_default(true)? {
+						Err(STATUS_NOT_A_DIRECTORY)?;
+					}
+				}
 			}
 			let mut children = parent.children.write().unwrap();
 			if let Some(entry) = children.get(EntryNameRef::new(name.file_name)) {
