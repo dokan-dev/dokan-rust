@@ -72,7 +72,7 @@ impl<'a> FullName<'a> {
 				} else if stream_type_str == EntryName(U16String::from_str("$BITMAP")).borrow() {
 					StreamType::Bitmap
 				} else {
-					return Err(STATUS_ACCESS_DENIED);
+					return Err(STATUS_OBJECT_NAME_INVALID);
 				};
 				Ok(Self {
 					file_name,
@@ -136,7 +136,7 @@ pub fn split_path<'a>(
 			return Err(STATUS_OBJECT_NAME_INVALID);
 		}
 		Ok(Some((
-			FullName::new(name)?,
+			FullName::new(name).map_err(|_| STATUS_ACCESS_DENIED)?,
 			find_dir_entry(root, &path[..path.len() - 1])?,
 		)))
 	}
