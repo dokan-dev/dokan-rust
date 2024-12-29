@@ -72,7 +72,7 @@ impl<'a> FullName<'a> {
 				} else if stream_type_str == EntryName(U16String::from_str("$BITMAP")).borrow() {
 					StreamType::Bitmap
 				} else {
-					return Err(STATUS_OBJECT_NAME_INVALID);
+					return Err(STATUS_ACCESS_DENIED);
 				};
 				Ok(Self {
 					file_name,
