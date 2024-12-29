@@ -952,12 +952,9 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 			.upgrade()
 			.ok_or(STATUS_INVALID_DEVICE_REQUEST)?;
 		if new_file_name.as_slice().first() == Some(&(':' as u16)) {
-			let src_stream_info = FullName::new(src_name)
-				.map_err(|_| STATUS_ACCESS_DENIED)?
-				.stream_info;
-			let dst_stream_info = FullName::new(U16Str::from_slice(new_file_name.as_slice()))
-				.map_err(|_| STATUS_ACCESS_DENIED)?
-				.stream_info;
+			let src_stream_info = FullName::new(src_name)?.stream_info;
+			let dst_stream_info =
+				FullName::new(U16Str::from_slice(new_file_name.as_slice()))?.stream_info;
 			let src_is_default = context.alt_stream.read().unwrap().is_none();
 			let dst_is_default = if let Some(stream_info) = &dst_stream_info {
 				stream_info.check_default(context.entry.is_dir())?
