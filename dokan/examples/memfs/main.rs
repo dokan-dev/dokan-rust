@@ -499,7 +499,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 			if create_options & FILE_DIRECTORY_FILE > 0 {
 				if let Some(stream_info) = &name.stream_info {
 					if !stream_info.check_default(true)? {
-						Err(STATUS_NOT_A_DIRECTORY)?;
+						return Err(STATUS_NOT_A_DIRECTORY);
 					}
 				}
 			}
