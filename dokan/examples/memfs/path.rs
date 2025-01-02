@@ -136,7 +136,7 @@ pub fn split_path<'a>(
 			return Err(STATUS_OBJECT_NAME_INVALID);
 		}
 		Ok(Some((
-			FullName::new(name)?,
+			FullName::new(name).map_err(|_| STATUS_ACCESS_DENIED)?,
 			find_dir_entry(root, &path[..path.len() - 1])?,
 		)))
 	}

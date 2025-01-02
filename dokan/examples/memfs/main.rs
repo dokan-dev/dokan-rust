@@ -355,9 +355,6 @@ impl Drop for EntryHandle {
 			parent_children
 				.remove(Borrow::<EntryNameRef>::borrow(&key))
 				.unwrap();
-		} else {
-			// Ignore root directory.
-			stat.delete_pending = false
 		}
 		let alt_stream = self.alt_stream.read().unwrap();
 		if let Some(stream) = alt_stream.as_ref() {
@@ -499,14 +496,25 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 		let delete_on_close = create_options & FILE_DELETE_ON_CLOSE > 0;
 		let path_info = path::split_path(&self.root, file_name)?;
 		if let Some((name, parent)) = path_info {
+			if create_options & FILE_DIRECTORY_FILE > 0 {
+				if let Some(stream_info) = &name.stream_info {
+					if !stream_info.check_default(true)? {
+						return Err(STATUS_NOT_A_DIRECTORY);
+					}
+				}
+			}
 			let mut children = parent.children.write().unwrap();
 			if let Some(entry) = children.get(EntryNameRef::new(name.file_name)) {
 				let stat = entry.stat().read().unwrap();
 				let is_readonly = stat.attrs.value & winnt::FILE_ATTRIBUTE_READONLY > 0;
-				let is_hidden_system = stat.attrs.value & winnt::FILE_ATTRIBUTE_HIDDEN > 0
-					&& stat.attrs.value & winnt::FILE_ATTRIBUTE_SYSTEM > 0
-					&& !(file_attributes & winnt::FILE_ATTRIBUTE_HIDDEN > 0
-						&& file_attributes & winnt::FILE_ATTRIBUTE_SYSTEM > 0);
+				let is_hidden_system = create_disposition == FILE_OVERWRITE_IF
+					&& (stat.attrs.value & winnt::FILE_ATTRIBUTE_HIDDEN > 0
+						&& !(file_attributes & winnt::FILE_ATTRIBUTE_HIDDEN > 0)
+						|| stat.attrs.value & winnt::FILE_ATTRIBUTE_SYSTEM > 0
+							&& !(file_attributes & winnt::FILE_ATTRIBUTE_SYSTEM > 0));
+				if is_readonly && delete_on_close {
+					return Err(STATUS_CANNOT_DELETE);
+				}
 				if is_readonly
 					&& (desired_access & winnt::FILE_WRITE_DATA > 0
 						|| desired_access & winnt::FILE_APPEND_DATA > 0)
@@ -515,9 +523,6 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 				}
 				if stat.delete_pending {
 					return Err(STATUS_DELETE_PENDING);
-				}
-				if is_readonly && delete_on_close {
-					return Err(STATUS_CANNOT_DELETE);
 				}
 				std::mem::drop(stat);
 				let ret = if let Some(stream_info) = &name.stream_info {
@@ -575,7 +580,9 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 				}
 				match entry {
 					Entry::File(file) => {
-						if create_options & FILE_DIRECTORY_FILE > 0 {
+						if create_disposition != FILE_CREATE
+							&& create_options & FILE_DIRECTORY_FILE > 0
+						{
 							return Err(STATUS_NOT_A_DIRECTORY);
 						}
 						match create_disposition {
