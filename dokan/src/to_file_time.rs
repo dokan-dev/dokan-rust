@@ -10,10 +10,10 @@ pub trait ToFileTime {
 
 impl ToFileTime for SystemTime {
 	fn to_filetime(&self) -> FILETIME {
-		let intervals = self
-			.duration_since(UNIX_EPOCH - FILETIME_OFFSET)
-			.unwrap_or(Duration::from_secs(0))
-			.as_nanos() / 100;
+		let intervals =
+			self.duration_since(UNIX_EPOCH - FILETIME_OFFSET)
+				.unwrap_or(Duration::from_secs(0))
+				.as_nanos() / 100;
 		FILETIME {
 			dwLowDateTime: intervals as u32,
 			dwHighDateTime: (intervals >> 32) as u32,

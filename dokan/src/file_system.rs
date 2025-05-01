@@ -124,7 +124,7 @@ pub struct MountOptions<'a> {
 	pub volume_security_descriptor: Option<[SCHAR; VOLUME_SECURITY_DESCRIPTOR_MAX_SIZE]>,
 }
 
-impl<'a> Default for MountOptions<'a> {
+impl Default for MountOptions<'_> {
 	fn default() -> Self {
 		Self {
 			single_thread: Default::default(),
@@ -225,10 +225,9 @@ impl<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h> FileSystemMounter<'c, 'h, 
 					Some(_) => VOLUME_SECURITY_DESCRIPTOR_MAX_SIZE as u32,
 					None => 0,
 				},
-				VolumeSecurityDescriptor: match options.volume_security_descriptor {
-					Some(descriptor) => descriptor,
-					None => [0; VOLUME_SECURITY_DESCRIPTOR_MAX_SIZE],
-				},
+				VolumeSecurityDescriptor: options
+					.volume_security_descriptor
+					.unwrap_or([0; VOLUME_SECURITY_DESCRIPTOR_MAX_SIZE]),
 			},
 			operations: DOKAN_OPERATIONS {
 				ZwCreateFile: Some(operations::create_file::<'c, 'h, FSH>),

@@ -46,6 +46,7 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	/// [`ZwCreateFile`]: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-zwcreatefile
 	/// [`CreateFile`]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew
 	/// [`map_kernel_to_user_create_file_flags`]: crate::map_kernel_to_user_create_file_flags
+	#[allow(clippy::too_many_arguments)]
 	fn create_file(
 		&'h self,
 		file_name: &U16CStr,

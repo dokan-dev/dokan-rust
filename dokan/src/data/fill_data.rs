@@ -20,9 +20,9 @@ pub enum FillDataError {
 	BufferFull,
 }
 
-impl Into<NTSTATUS> for FillDataError {
-	fn into(self) -> NTSTATUS {
-		match self {
+impl From<FillDataError> for NTSTATUS {
+	fn from(err: FillDataError) -> NTSTATUS {
+		match err {
 			FillDataError::NameTooLong => STATUS_INTERNAL_ERROR,
 			FillDataError::BufferFull => STATUS_BUFFER_OVERFLOW,
 		}

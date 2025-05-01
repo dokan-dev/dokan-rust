@@ -138,7 +138,7 @@ fn main() {
 		env::var("CARGO_PKG_VERSION")
 			.unwrap()
 			.split('+')
-			.last()
+			.next_back()
 			.unwrap(),
 		"Mismatch detected between crate version and bundled Dokan source version.",
 	);

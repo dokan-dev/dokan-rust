@@ -152,7 +152,7 @@ pub enum HandlerSignal {
 	UnlockFile(i64, i64),
 	GetFileSecurity(u32, u32),
 	SetFileSecurity(u32, u32, U16CString, i32),
-	OpenRequesterToken(Pin<Box<Vec<u8>>>),
+	OpenRequesterToken(Pin<Vec<u8>>),
 	OperationInfo(OperationInfoDump),
 }
 
@@ -188,7 +188,7 @@ fn get_descriptor_owner(desc: PSECURITY_DESCRIPTOR) -> (U16CString, BOOL) {
 	}
 }
 
-fn get_user_info(token: HANDLE) -> Pin<Box<Vec<u8>>> {
+fn get_user_info(token: HANDLE) -> Pin<Vec<u8>> {
 	unsafe {
 		let mut user_info_len = 0;
 		assert_eq_win32!(
@@ -196,7 +196,7 @@ fn get_user_info(token: HANDLE) -> Pin<Box<Vec<u8>>> {
 			FALSE
 		);
 		assert_eq!(GetLastError(), ERROR_INSUFFICIENT_BUFFER);
-		let mut user_info_buffer = Box::pin(vec![0; user_info_len as usize]);
+		let mut user_info_buffer = Pin::new(vec![0; user_info_len as usize]);
 		assert_eq_win32!(
 			GetTokenInformation(
 				token,
@@ -212,7 +212,7 @@ fn get_user_info(token: HANDLE) -> Pin<Box<Vec<u8>>> {
 	}
 }
 
-fn get_current_user_info() -> Pin<Box<Vec<u8>>> {
+fn get_current_user_info() -> Pin<Vec<u8>> {
 	unsafe {
 		let mut token = ptr::null_mut();
 		assert_eq_win32!(
@@ -853,7 +853,7 @@ pub struct TestDriveContext<'a> {
 	instance: RefCell<Option<FileSystemHandle>>,
 }
 
-impl<'a> TestDriveContext<'a> {
+impl TestDriveContext<'_> {
 	pub fn signal(&self) -> HandlerSignal {
 		self.rx_signal.recv().unwrap()
 	}
@@ -872,7 +872,7 @@ pub fn test_flags() -> MountFlags {
 		MountFlags::CURRENT_SESSION | MountFlags::FILELOCK_USER_MODE | MountFlags::ALT_STREAM;
 
 	let enable_console_debug_log =
-		std::env::var_os("DOKAN_CONSOLE_DEBUG_LOG").map_or(false, |x| &x != "0");
+		std::env::var_os("DOKAN_CONSOLE_DEBUG_LOG").is_some_and(|x| &x != "0");
 	if enable_console_debug_log {
 		flags = flags | MountFlags::DEBUG | MountFlags::STDERR;
 	}
@@ -1537,7 +1537,7 @@ fn supports_null_ptrs() {
 
 struct DirectoryChangeIterator {
 	hd: OwnedHandle,
-	buf: Pin<Box<Vec<u8>>>,
+	buf: Pin<Vec<u8>>,
 	offset: usize,
 	// Simply reuse the safe handle type as events are closed by CloseHandle as well.
 	he: OwnedHandle,
@@ -1561,7 +1561,7 @@ impl DirectoryChangeIterator {
 			assert_ne_win32!(he, INVALID_HANDLE_VALUE);
 			let mut result = DirectoryChangeIterator {
 				hd: OwnedHandle::from_raw_handle(hd),
-				buf: Box::pin(vec![
+				buf: Pin::new(vec![
 					0;
 					mem::size_of::<FILE_NOTIFY_INFORMATION>() + MAX_PATH
 				]),
@@ -1615,8 +1615,7 @@ impl Iterator for DirectoryChangeIterator {
 				assert_eq!(self.overlapped.InternalHigh, ret_len as usize);
 				assert_ne!(ret_len, 0);
 			}
-			let info = &*(self.buf.as_ptr().offset(self.offset as isize)
-				as *const FILE_NOTIFY_INFORMATION);
+			let info = &*(self.buf.as_ptr().add(self.offset) as *const FILE_NOTIFY_INFORMATION);
 			self.offset = if info.NextEntryOffset == 0 {
 				0
 			} else {

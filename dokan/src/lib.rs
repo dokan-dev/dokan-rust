@@ -115,30 +115,41 @@ pub fn is_name_in_expression(
 fn test_is_name_in_expression() {
 	use usage_tests::convert_str;
 
-	assert_eq!(
-		is_name_in_expression(convert_str("foo"), convert_str("foo"), true),
+	assert!(is_name_in_expression(
+		convert_str("foo"),
+		convert_str("foo"),
 		true
-	);
-	assert_eq!(
-		is_name_in_expression(convert_str("*"), convert_str("foo"), true),
+	));
+
+	assert!(is_name_in_expression(
+		convert_str("*"),
+		convert_str("foo"),
 		true
-	);
-	assert_eq!(
-		is_name_in_expression(convert_str("?"), convert_str("x"), true),
+	));
+
+	assert!(is_name_in_expression(
+		convert_str("?"),
+		convert_str("x"),
 		true
-	);
-	assert_eq!(
-		is_name_in_expression(convert_str("?"), convert_str("foo"), true),
+	));
+
+	assert!(!is_name_in_expression(
+		convert_str("?"),
+		convert_str("foo"),
+		true
+	));
+
+	assert!(is_name_in_expression(
+		convert_str("F*"),
+		convert_str("foo"),
+		true
+	));
+
+	assert!(!is_name_in_expression(
+		convert_str("F*"),
+		convert_str("foo"),
 		false
-	);
-	assert_eq!(
-		is_name_in_expression(convert_str("F*"), convert_str("foo"), true),
-		true
-	);
-	assert_eq!(
-		is_name_in_expression(convert_str("F*"), convert_str("foo"), false),
-		false
-	);
+	));
 }
 
 /// Converts Win32 error (e.g. returned by [`GetLastError`]) to [`NTSTATUS`].

@@ -72,18 +72,12 @@ pub struct MountPointList {
 	len: usize,
 }
 
-impl MountPointList {
-	pub fn len(&self) -> usize {
-		self.len
-	}
-}
-
 impl<'a> IntoIterator for &'a MountPointList {
 	type Item = MountPointInfo<'a>;
 
 	type IntoIter = Map<
 		slice::Iter<'a, DOKAN_MOUNT_POINT_INFO>,
-		fn(&'a DOKAN_MOUNT_POINT_INFO) -> MountPointInfo,
+		fn(&'a DOKAN_MOUNT_POINT_INFO) -> MountPointInfo<'a>,
 	>;
 
 	fn into_iter(self) -> Self::IntoIter {
@@ -104,7 +98,7 @@ impl Drop for MountPointList {
 /// Lists of active Dokan mount points.
 ///
 /// Returns `None` in case of error.
-pub fn list_mount_points<'a>(unc_only: bool) -> Option<MountPointList> {
+pub fn list_mount_points(unc_only: bool) -> Option<MountPointList> {
 	unsafe {
 		let mut len: ULONG = 0;
 		let list_ptr = DokanGetMountPointList(unc_only.into(), &mut len);

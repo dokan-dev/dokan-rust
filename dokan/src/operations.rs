@@ -49,9 +49,8 @@ pub extern "stdcall" fn create_file<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> +
 				&mut info,
 			)
 			.and_then(|create_info| {
-				(&mut *dokan_file_info).Context =
-					Box::into_raw(Box::new(create_info.context)) as u64;
-				(&mut *dokan_file_info).IsDirectory = create_info.is_dir.into();
+				(*dokan_file_info).Context = Box::into_raw(Box::new(create_info.context)) as u64;
+				(*dokan_file_info).IsDirectory = create_info.is_dir.into();
 				if (create_disposition == FILE_OPEN_IF
 					|| create_disposition == FILE_OVERWRITE_IF
 					|| create_disposition == FILE_SUPERSEDE)
