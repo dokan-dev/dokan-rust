@@ -67,8 +67,8 @@ impl<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h> OperationInfo<'c, 'h, FSH>
 	}
 
 	/// Gets whether the file should be deleted when it is closed.
-	pub fn delete_on_close(&self) -> bool {
-		self.file_info().DeleteOnClose != 0
+	pub fn delete_pending(&self) -> bool {
+		self.file_info().DeletePending != 0
 	}
 
 	/// Gets whether it is a paging I/O operation.

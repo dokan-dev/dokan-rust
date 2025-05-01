@@ -84,7 +84,7 @@ pub struct DOKAN_FILE_INFO {
 	pub ProcessingContext: PVOID,
 	pub ProcessId: ULONG,
 	pub IsDirectory: UCHAR,
-	pub DeleteOnClose: UCHAR,
+	pub DeletePending: UCHAR,
 	pub PagingIo: UCHAR,
 	pub SynchronousIo: UCHAR,
 	pub Nocache: UCHAR,

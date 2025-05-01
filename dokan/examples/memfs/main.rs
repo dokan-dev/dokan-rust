@@ -272,7 +272,7 @@ impl Clone for Entry {
 struct EntryHandle {
 	entry: Entry,
 	alt_stream: RwLock<Option<Arc<RwLock<AltStream>>>>,
-	delete_on_close: bool,
+	delete_pending: bool,
 	mtime_delayed: Mutex<Option<SystemTime>>,
 	atime_delayed: Mutex<Option<SystemTime>>,
 	ctime_enabled: AtomicBool,
@@ -281,11 +281,7 @@ struct EntryHandle {
 }
 
 impl EntryHandle {
-	fn new(
-		entry: Entry,
-		alt_stream: Option<Arc<RwLock<AltStream>>>,
-		delete_on_close: bool,
-	) -> Self {
+	fn new(entry: Entry, alt_stream: Option<Arc<RwLock<AltStream>>>, delete_pending: bool) -> Self {
 		entry.stat().write().unwrap().handle_count += 1;
 		if let Some(s) = &alt_stream {
 			s.write().unwrap().handle_count += 1;
@@ -293,7 +289,7 @@ impl EntryHandle {
 		Self {
 			entry,
 			alt_stream: RwLock::new(alt_stream),
-			delete_on_close,
+			delete_pending,
 			mtime_delayed: Mutex::new(None),
 			atime_delayed: Mutex::new(None),
 			ctime_enabled: AtomicBool::new(true),
@@ -332,7 +328,7 @@ impl Drop for EntryHandle {
 		// Lock parent before checking. This avoids racing with create_file.
 		let parent_children = parent.as_ref().map(|p| p.children.write().unwrap());
 		let mut stat = self.entry.stat().write().unwrap();
-		if self.delete_on_close && self.alt_stream.read().unwrap().is_none() {
+		if self.delete_pending && self.alt_stream.read().unwrap().is_none() {
 			stat.delete_pending = true;
 		}
 		stat.handle_count -= 1;
@@ -360,7 +356,7 @@ impl Drop for EntryHandle {
 		if let Some(stream) = alt_stream.as_ref() {
 			stat.mtime = SystemTime::now();
 			let mut stream_locked = stream.write().unwrap();
-			if self.delete_on_close {
+			if self.delete_pending {
 				stream_locked.delete_pending = true;
 			}
 			stream_locked.handle_count -= 1;
@@ -413,14 +409,14 @@ impl MemFsHandler {
 		&self,
 		name: &FullName,
 		attrs: u32,
-		delete_on_close: bool,
+		delete_pending: bool,
 		creator_desc: winnt::PSECURITY_DESCRIPTOR,
 		token: ntdef::HANDLE,
 		parent: &Arc<DirEntry>,
 		children: &mut HashMap<EntryName, Entry>,
 		is_dir: bool,
 	) -> OperationResult<CreateFileInfo<EntryHandle>> {
-		if attrs & winnt::FILE_ATTRIBUTE_READONLY > 0 && delete_on_close {
+		if attrs & winnt::FILE_ATTRIBUTE_READONLY > 0 && delete_pending {
 			return Err(STATUS_CANNOT_DELETE);
 		}
 		let mut stat = Stat::new(
@@ -459,7 +455,7 @@ impl MemFsHandler {
 		parent.stat.write().unwrap().update_mtime(SystemTime::now());
 		let is_dir = is_dir && stream.is_some();
 		Ok(CreateFileInfo {
-			context: EntryHandle::new(entry, stream, delete_on_close),
+			context: EntryHandle::new(entry, stream, delete_pending),
 			is_dir,
 			new_file_created: true,
 		})
@@ -493,7 +489,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 		if create_disposition > FILE_MAXIMUM_DISPOSITION {
 			return Err(STATUS_INVALID_PARAMETER);
 		}
-		let delete_on_close = create_options & FILE_DELETE_ON_CLOSE > 0;
+		let delete_pending = create_options & FILE_DELETE_ON_CLOSE > 0;
 		let path_info = path::split_path(&self.root, file_name)?;
 		if let Some((name, parent)) = path_info {
 			if create_options & FILE_DIRECTORY_FILE > 0 {
@@ -512,7 +508,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 						&& !(file_attributes & winnt::FILE_ATTRIBUTE_HIDDEN > 0)
 						|| stat.attrs.value & winnt::FILE_ATTRIBUTE_SYSTEM > 0
 							&& !(file_attributes & winnt::FILE_ATTRIBUTE_SYSTEM > 0));
-				if is_readonly && delete_on_close {
+				if is_readonly && delete_pending {
 					return Err(STATUS_CANNOT_DELETE);
 				}
 				if is_readonly
@@ -573,7 +569,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 				};
 				if let Some((stream, new_file_created)) = ret {
 					return Ok(CreateFileInfo {
-						context: EntryHandle::new(entry.clone(), Some(stream), delete_on_close),
+						context: EntryHandle::new(entry.clone(), Some(stream), delete_pending),
 						is_dir: false,
 						new_file_created,
 					});
@@ -606,7 +602,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 							context: EntryHandle::new(
 								Entry::File(Arc::clone(&file)),
 								None,
-								delete_on_close,
+								delete_pending,
 							),
 							is_dir: false,
 							new_file_created: false,
@@ -621,7 +617,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 								context: EntryHandle::new(
 									Entry::Directory(Arc::clone(&dir)),
 									None,
-									delete_on_close,
+									delete_pending,
 								),
 								is_dir: true,
 								new_file_created: false,
@@ -641,7 +637,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 						FILE_CREATE | FILE_OPEN_IF => self.create_new(
 							&name,
 							file_attributes,
-							delete_on_close,
+							delete_pending,
 							security_context.AccessState.SecurityDescriptor,
 							token.as_raw_handle(),
 							&parent,
@@ -658,7 +654,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 						self.create_new(
 							&name,
 							file_attributes | winnt::FILE_ATTRIBUTE_ARCHIVE,
-							delete_on_close,
+							delete_pending,
 							security_context.AccessState.SecurityDescriptor,
 							token.as_raw_handle(),
 							&parent,
@@ -677,7 +673,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 						context: EntryHandle::new(
 							Entry::Directory(Arc::clone(&self.root)),
 							None,
-							info.delete_on_close(),
+							info.delete_pending(),
 						),
 						is_dir: true,
 						new_file_created: false,
@@ -894,9 +890,9 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 		}
 		let alt_stream = context.alt_stream.read().unwrap();
 		if let Some(stream) = alt_stream.as_ref() {
-			stream.write().unwrap().delete_pending = info.delete_on_close();
+			stream.write().unwrap().delete_pending = info.delete_pending();
 		} else {
-			context.entry.stat().write().unwrap().delete_pending = info.delete_on_close();
+			context.entry.stat().write().unwrap().delete_pending = info.delete_pending();
 		}
 		Ok(())
 	}
@@ -918,10 +914,10 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 				// Root directory can't be deleted.
 				return Err(STATUS_ACCESS_DENIED);
 			}
-			if info.delete_on_close() && !children.is_empty() {
+			if info.delete_pending() && !children.is_empty() {
 				Err(STATUS_DIRECTORY_NOT_EMPTY)
 			} else {
-				stat.delete_pending = info.delete_on_close();
+				stat.delete_pending = info.delete_pending();
 				Ok(())
 			}
 		} else {

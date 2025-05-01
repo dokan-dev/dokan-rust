@@ -62,7 +62,7 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 
 	/// Called when the last handle for the file object has been closed.
 	///
-	/// If [`info.delete_on_close`] returns `true`, the file should be deleted in this function. As the function doesn't
+	/// If [`info.delete_pending`] returns `true`, the file should be deleted in this function. As the function doesn't
 	/// have a return value, you should make sure the file is deletable in [`delete_file`] or [`delete_directory`].
 	///
 	/// Note that the file object hasn't been released and there might be more I/O operations before
@@ -71,7 +71,7 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	/// Normally [`close_file`] will be called shortly after this function. However, the file object
 	/// may also be reused, and in that case [`create_file`] will be called instead.
 	///
-	/// [`info.delete_on_close`]: OperationInfo::delete_on_close
+	/// [`info.delete_pending`]: OperationInfo::delete_pending
 	/// [`delete_file`]: Self::delete_file
 	/// [`delete_directory`]: Self::delete_directory
 	/// [`close_file`]: Self::close_file
@@ -256,10 +256,10 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	/// The file should not be deleted in this function. Instead, it should only check if the file
 	/// can be deleted and return `Ok` if that is possible.
 	///
-	/// It will also be called with [`info.delete_on_close`] returning `false` to notify that the
+	/// It will also be called with [`info.delete_pending`] returning `false` to notify that the
 	/// file is no longer requested to be deleted.
 	///
-	/// [`info.delete_on_close`]: OperationInfo::delete_on_close
+	/// [`info.delete_pending`]: OperationInfo::delete_pending
 	fn delete_file(
 		&'h self,
 		file_name: &U16CStr,
@@ -274,12 +274,12 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	/// Similar to [`delete_file`], it should only check if the directory can be deleted and delay
 	/// the actual deletion to the [`cleanup`] function.
 	///
-	/// It will also be called with [`info.delete_on_close`] returning `false` to notify that the
+	/// It will also be called with [`info.delete_pending`] returning `false` to notify that the
 	/// directory is no longer requested to be deleted.
 	///
 	/// [`delete_file`]: Self::delete_file
 	/// [`cleanup`]: Self::cleanup
-	/// [`info.delete_on_close`]: OperationInfo::delete_on_close
+	/// [`info.delete_pending`]: OperationInfo::delete_pending
 	fn delete_directory(
 		&'h self,
 		file_name: &U16CStr,

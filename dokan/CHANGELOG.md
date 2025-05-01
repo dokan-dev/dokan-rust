@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade to **Dokan 2.3.0** through `dokan-sys`.
 - Bump dependencies.
+- **Library breaking change:** DOKAN_FILE_INFO.DeleteOnClose was renamed DOKAN_FILE_INFO.DeletePending. Same
+  expectation (remove the object) but is set when last handle on the object is being closed dokan-dev/dokany#883.
 
 ## [0.3.1] - 2022-10-04
 

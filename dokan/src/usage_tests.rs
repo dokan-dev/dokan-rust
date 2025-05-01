@@ -115,7 +115,7 @@ impl Drop for TestContext {
 pub struct OperationInfoDump {
 	pub pid: u32,
 	pub is_dir: bool,
-	pub delete_on_close: bool,
+	pub delete_pending: bool,
 	pub paging_io: bool,
 	pub synchronous_io: bool,
 	pub no_cache: bool,
@@ -328,7 +328,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 					.send(HandlerSignal::OperationInfo(OperationInfoDump {
 						pid: info.pid(),
 						is_dir: info.is_dir(),
-						delete_on_close: info.delete_on_close(),
+						delete_pending: info.delete_pending(),
 						paging_io: info.paging_io(),
 						synchronous_io: info.synchronous_io(),
 						no_cache: info.no_cache(),
@@ -592,7 +592,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_delete_file" {
 			self.tx
-				.send(HandlerSignal::DeleteFile(info.delete_on_close()))
+				.send(HandlerSignal::DeleteFile(info.delete_pending()))
 				.unwrap();
 			Ok(())
 		} else {
@@ -610,7 +610,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_delete_directory" {
 			self.tx
-				.send(HandlerSignal::DeleteDirectory(info.delete_on_close()))
+				.send(HandlerSignal::DeleteDirectory(info.delete_pending()))
 				.unwrap();
 			Ok(())
 		} else {
@@ -1489,7 +1489,7 @@ fn can_get_operation_info() {
 			HandlerSignal::OperationInfo(OperationInfoDump {
 				pid: process::id(),
 				is_dir: false,
-				delete_on_close: false,
+				delete_pending: false,
 				paging_io: false,
 				synchronous_io: false,
 				no_cache: false,
