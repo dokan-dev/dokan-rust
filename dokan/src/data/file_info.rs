@@ -1,6 +1,6 @@
 use std::time::SystemTime;
 
-use winapi::um::fileapi::BY_HANDLE_FILE_INFORMATION;
+use windows_sys::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION;
 
 use crate::to_file_time::ToFileTime;
 

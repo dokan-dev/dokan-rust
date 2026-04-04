@@ -16,11 +16,11 @@
 //!
 //! Please note that some of the constants from Win32 API that might be used when interacting with
 //! this crate are not provided directly here. However, you can easily find them in the
-//! [`winapi`] crate.
+//! [`windows-sys`] crate.
 //!
 //! [Dokan]: https://dokan-dev.github.io/
 //! [`dokan-sys`]: https://crates.io/crates/dokan-sys
-//! [`winapi`]: https://crates.io/crates/winapi
+//! [`windows-sys`]: https://crates.io/crates/windows-sys
 
 mod data;
 mod file_system;
@@ -33,15 +33,11 @@ mod to_file_time;
 #[cfg(test)]
 mod usage_tests;
 
+use std::time::Duration;
+
 use dokan_sys::*;
 use widestring::U16CStr;
-use winapi::{
-	shared::{
-		minwindef::{DWORD, FALSE, TRUE},
-		ntdef::NTSTATUS,
-	},
-	um::{errhandlingapi::GetLastError, winnt::ACCESS_MASK},
-};
+use windows_sys::Win32::Foundation::{FALSE, GetLastError, NTSTATUS, TRUE};
 
 pub use crate::{data::*, file_system::*, file_system_handler::*, notify::*};
 
@@ -159,7 +155,7 @@ pub fn map_win32_error_to_ntstatus(error: DWORD) -> NTSTATUS {
 
 #[test]
 fn can_map_win32_error_to_ntstatus() {
-	use winapi::shared::{ntstatus::STATUS_INTERNAL_ERROR, winerror::ERROR_INTERNAL_ERROR};
+	use windows_sys::Win32::Foundation::{ERROR_INTERNAL_ERROR, STATUS_INTERNAL_ERROR};
 
 	assert_eq!(
 		map_win32_error_to_ntstatus(ERROR_INTERNAL_ERROR),
@@ -183,20 +179,20 @@ fn can_map_win32_error_to_ntstatus() {
 /// #
 /// # use dokan::win32_ensure;
 /// # use widestring::U16CString;
-/// # use winapi::{shared::ntdef::NTSTATUS, um::processenv::GetCurrentDirectoryW};
+/// # use windows_sys::Win32::{Foundation::NTSTATUS, System::Environment::GetCurrentDirectoryW};
 /// #
 /// fn get_current_directory() -> Result<U16CString, NTSTATUS> {
-/// 	unsafe {
-/// 		let len = GetCurrentDirectoryW(0, ptr::null_mut());
-/// 		win32_ensure(len != 0)?;
+///     unsafe {
+///         let len = GetCurrentDirectoryW(0, ptr::null_mut());
+///         win32_ensure(len != 0)?;
 ///
-/// 		let mut buffer = Vec::with_capacity(len as usize);
-/// 		let actual_len = GetCurrentDirectoryW(len, buffer.as_mut_ptr());
-/// 		win32_ensure(actual_len != 0)?;
-/// 		assert_eq!(actual_len, len);
+///         let mut buffer = Vec::with_capacity(len as usize);
+///         let actual_len = GetCurrentDirectoryW(len, buffer.as_mut_ptr());
+///         win32_ensure(actual_len != 0)?;
+///         assert_eq!(actual_len, len);
 ///
-/// 		Ok(U16CString::from_vec_unchecked(buffer))
-/// 	}
+///         Ok(U16CString::from_vec_unchecked(buffer))
+///     }
 /// }
 /// ```
 pub fn win32_ensure(condition: bool) -> Result<(), NTSTATUS> {
@@ -257,12 +253,10 @@ pub fn map_kernel_to_user_create_file_flags(
 #[test]
 fn test_map_kernel_to_user_create_file_flags() {
 	use dokan_sys::win32::{FILE_OPEN, FILE_WRITE_THROUGH};
-	use winapi::um::{
-		fileapi::OPEN_EXISTING,
-		winbase::FILE_FLAG_WRITE_THROUGH,
-		winnt::{
-			FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL, GENERIC_ALL, GENERIC_EXECUTE, GENERIC_READ,
-			GENERIC_WRITE,
+	use windows_sys::Win32::{
+		Foundation::{GENERIC_ALL, GENERIC_EXECUTE, GENERIC_READ, GENERIC_WRITE},
+		Storage::FileSystem::{
+			FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_WRITE_THROUGH, OPEN_EXISTING,
 		},
 	};
 
@@ -285,10 +279,54 @@ fn test_map_kernel_to_user_create_file_flags() {
 
 /// Unmounts a Dokan volume from the specified mount point.
 ///
-/// Returns whether it succeeded.
+/// **Note:** This function is asynchronous — it signals the Dokan driver to release the mount
+/// point and returns immediately. The driver-level teardown may still be in progress when it
+/// returns. If you need to remount on the same mount point, use [`unmount_and_wait`] instead
+/// to avoid a race where a pending release tears down the new mount.
+///
+/// Returns whether the unmount request was accepted.
 #[must_use]
 pub fn unmount(mount_point: impl AsRef<U16CStr>) -> bool {
 	unsafe { DokanRemoveMountPoint(mount_point.as_ref().as_ptr()) == TRUE }
+}
+
+/// Unmounts a Dokan volume and waits for the mount point to be fully released.
+///
+/// This is the synchronous counterpart to [`unmount`]. After signaling the Dokan driver to
+/// release the mount point, it polls [`list_mount_points`] until the mount point no longer
+/// appears in the active mount list, or the timeout expires.
+///
+/// Use this when you need to remount on the same mount point, or when you need to ensure the
+/// volume is fully torn down before proceeding.
+///
+/// Returns `true` if the mount point was successfully released within the timeout.
+/// Returns `false` if the unmount request was rejected or the timeout expired.
+#[must_use]
+pub fn unmount_and_wait(mount_point: impl AsRef<U16CStr>, timeout: Duration) -> bool {
+	let mount_point = mount_point.as_ref();
+	if !unmount(mount_point) {
+		return false;
+	}
+
+	let mount_point_str = mount_point.to_string_lossy();
+	let deadline = std::time::Instant::now() + timeout;
+	loop {
+		let still_mounted = list_mount_points(false)
+			.map(|list| {
+				(&list).into_iter().any(|mp| {
+					mp.mount_point
+						.is_some_and(|p| p.to_string_lossy() == mount_point_str)
+				})
+			})
+			.unwrap_or(false);
+		if !still_mounted {
+			return true;
+		}
+		if std::time::Instant::now() >= deadline {
+			return false;
+		}
+		std::thread::sleep(Duration::from_millis(50));
+	}
 }
 
 /// Output stream to write debug messages to.

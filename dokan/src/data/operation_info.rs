@@ -5,12 +5,12 @@ use std::{
 };
 
 use dokan_sys::{
-	DokanOpenRequestorToken, DokanResetTimeout, DOKAN_FILE_INFO, DOKAN_OPTIONS, PDOKAN_FILE_INFO,
+	DOKAN_FILE_INFO, DOKAN_OPTIONS, DokanOpenRequestorToken, DokanResetTimeout, PDOKAN_FILE_INFO,
 };
 use widestring::U16CStr;
-use winapi::{shared::minwindef::TRUE, um::handleapi::INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Foundation::{INVALID_HANDLE_VALUE, TRUE};
 
-use crate::{file_system_handler::FileSystemHandler, MountFlags};
+use crate::{MountFlags, file_system_handler::FileSystemHandler};
 
 /// Information about the current operation.
 #[derive(Debug)]
@@ -41,8 +41,32 @@ impl<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h> OperationInfo<'c, 'h, FSH>
 		unsafe { &*(self.mount_options().GlobalContext as *const _) }
 	}
 
+	pub fn try_context(&self) -> Option<&'c FSH::Context> {
+		let ptr = self.file_info().Context as *const FSH::Context;
+		if ptr.is_null() {
+			None
+		} else {
+			unsafe { Some(&*ptr) }
+		}
+	}
+
+	/// Returns the file context, panicking if it is null.
+	///
+	/// # Deprecated
+	///
+	/// Use [`try_context`] instead, which returns `Option<&Context>` and lets you handle
+	/// the null case gracefully. The dispatch layer already guards against null contexts
+	/// before calling handler methods, so this method should rarely be needed.
+	///
+	/// [`try_context`]: Self::try_context
+	#[deprecated(
+		since = "0.4.0",
+		note = "use try_context() instead to handle null contexts gracefully"
+	)]
 	pub fn context(&self) -> &'c FSH::Context {
-		unsafe { &*(self.file_info().Context as *const _) }
+		self.try_context().expect(
+			"file context is null — create_file may have failed or context was already dropped",
+		)
 	}
 
 	pub fn drop_context(&mut self) {

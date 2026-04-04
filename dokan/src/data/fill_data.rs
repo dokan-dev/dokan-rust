@@ -3,17 +3,14 @@ use std::{
 	fmt::{self, Display, Formatter},
 };
 
-use winapi::shared::{
-	ntdef::NTSTATUS,
-	ntstatus::{STATUS_BUFFER_OVERFLOW, STATUS_INTERNAL_ERROR},
-};
+use windows_sys::Win32::Foundation::{NTSTATUS, STATUS_BUFFER_OVERFLOW, STATUS_INTERNAL_ERROR};
 
 /// Error type for the `fill_data` callbacks.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum FillDataError {
 	/// File name exceeds the limit of [`MAX_PATH`].
 	///
-	/// [`MAX_PATH`]: winapi::shared::minwindef::MAX_PATH
+	/// [`MAX_PATH`]: windows_sys::Win32::Foundation::MAX_PATH
 	NameTooLong,
 
 	/// Buffer is full.

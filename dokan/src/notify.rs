@@ -3,7 +3,7 @@ use dokan_sys::{
 	DokanNotifyXAttrUpdate,
 };
 use widestring::U16CStr;
-use winapi::shared::minwindef::TRUE;
+use windows_sys::Win32::Foundation::TRUE;
 
 use crate::FileSystemHandle;
 

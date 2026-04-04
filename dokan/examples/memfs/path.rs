@@ -2,7 +2,9 @@ use std::{borrow::Borrow, sync::Arc};
 
 use dokan::OperationResult;
 use widestring::{U16CStr, U16Str, U16String};
-use winapi::shared::ntstatus::*;
+use windows_sys::Win32::Foundation::{
+	STATUS_ACCESS_DENIED, STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_PATH_NOT_FOUND,
+};
 
 use crate::{DirEntry, Entry, EntryName, EntryNameRef};
 

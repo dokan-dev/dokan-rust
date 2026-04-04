@@ -1,0 +1,26 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Dokan
+        run: winget install -e --id dokan-dev.Dokany --accept-source-agreements --accept-package-agreements
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo check --examples --tests
+
+      - name: Test
+        run: cargo test

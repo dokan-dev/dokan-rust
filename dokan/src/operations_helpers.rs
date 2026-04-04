@@ -1,9 +1,6 @@
 use std::panic::{self, UnwindSafe};
 
-use winapi::shared::{
-	ntdef::NTSTATUS,
-	ntstatus::{STATUS_INTERNAL_ERROR, STATUS_SUCCESS},
-};
+use windows_sys::Win32::Foundation::{NTSTATUS, STATUS_INTERNAL_ERROR, STATUS_SUCCESS};
 
 pub type NtResult = Result<(), NTSTATUS>;
 

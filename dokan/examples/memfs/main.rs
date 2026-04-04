@@ -7,27 +7,46 @@ use std::{
 	hash::{Hash, Hasher},
 	os::windows::io::AsRawHandle,
 	sync::{
-		atomic::{AtomicBool, AtomicU64, Ordering},
 		Arc, Mutex, RwLock, Weak,
+		atomic::{AtomicBool, AtomicU64, Ordering},
 	},
 	time::SystemTime,
 };
 
 use clap::{Arg, ArgAction, Command};
 use dokan::{
-	init, shutdown, unmount, CreateFileInfo, DiskSpaceInfo, FileInfo, FileSystemHandler,
-	FileSystemMounter, FileTimeOperation, FillDataError, FillDataResult, FindData, FindStreamData,
-	MountFlags, MountOptions, OperationInfo, OperationResult, VolumeInfo, IO_SECURITY_CONTEXT,
+	CreateFileInfo, DiskSpaceInfo, FileInfo, FileSystemHandler, FileSystemMounter,
+	FileTimeOperation, FillDataError, FillDataResult, FindData, FindStreamData,
+	IO_SECURITY_CONTEXT, MountFlags, MountOptions, OperationInfo, OperationResult, VolumeInfo,
+	init, shutdown, unmount,
 };
-use dokan_sys::win32::{
-	FILE_CREATE, FILE_DELETE_ON_CLOSE, FILE_DIRECTORY_FILE, FILE_MAXIMUM_DISPOSITION,
-	FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_IF, FILE_OVERWRITE, FILE_OVERWRITE_IF,
-	FILE_SUPERSEDE,
+use dokan_sys::{
+	ACCESS_MASK,
+	win32::{
+		FILE_CREATE, FILE_DELETE_ON_CLOSE, FILE_DIRECTORY_FILE, FILE_MAXIMUM_DISPOSITION,
+		FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_IF, FILE_OVERWRITE, FILE_OVERWRITE_IF,
+		FILE_SUPERSEDE,
+	},
 };
 use widestring::{U16CStr, U16CString, U16Str, U16String};
-use winapi::{
-	shared::{ntdef, ntstatus::*},
-	um::winnt,
+use windows_sys::Win32::{
+	Foundation::{
+		HANDLE, STATUS_ACCESS_DENIED, STATUS_BUFFER_OVERFLOW, STATUS_CANNOT_DELETE,
+		STATUS_DELETE_PENDING, STATUS_DIRECTORY_NOT_EMPTY, STATUS_FILE_IS_A_DIRECTORY,
+		STATUS_INVALID_DEVICE_REQUEST, STATUS_INVALID_PARAMETER, STATUS_NOT_A_DIRECTORY,
+		STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_NAME_NOT_FOUND,
+		STATUS_SHARING_VIOLATION,
+	},
+	Security::PSECURITY_DESCRIPTOR,
+	Storage::FileSystem::{
+		FILE_APPEND_DATA, FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN,
+		FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, FILE_ATTRIBUTE_OFFLINE,
+		FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM, FILE_ATTRIBUTE_TEMPORARY, FILE_WRITE_DATA,
+	},
+	System::SystemServices::{
+		FILE_CASE_PRESERVED_NAMES, FILE_CASE_SENSITIVE_SEARCH, FILE_NAMED_STREAMS,
+		FILE_PERSISTENT_ACLS, FILE_UNICODE_ON_DISK,
+	},
 };
 
 use crate::{path::FullName, security::SecurityDescriptor};
@@ -56,13 +75,13 @@ struct Attributes {
 
 impl Attributes {
 	fn new(attrs: u32) -> Self {
-		const SUPPORTED_ATTRS: u32 = winnt::FILE_ATTRIBUTE_ARCHIVE
-			| winnt::FILE_ATTRIBUTE_HIDDEN
-			| winnt::FILE_ATTRIBUTE_NOT_CONTENT_INDEXED
-			| winnt::FILE_ATTRIBUTE_OFFLINE
-			| winnt::FILE_ATTRIBUTE_READONLY
-			| winnt::FILE_ATTRIBUTE_SYSTEM
-			| winnt::FILE_ATTRIBUTE_TEMPORARY;
+		const SUPPORTED_ATTRS: u32 = FILE_ATTRIBUTE_ARCHIVE
+			| FILE_ATTRIBUTE_HIDDEN
+			| FILE_ATTRIBUTE_NOT_CONTENT_INDEXED
+			| FILE_ATTRIBUTE_OFFLINE
+			| FILE_ATTRIBUTE_READONLY
+			| FILE_ATTRIBUTE_SYSTEM
+			| FILE_ATTRIBUTE_TEMPORARY;
 		Self {
 			value: attrs & SUPPORTED_ATTRS,
 		}
@@ -71,10 +90,10 @@ impl Attributes {
 	fn get_output_attrs(&self, is_dir: bool) -> u32 {
 		let mut attrs = self.value;
 		if is_dir {
-			attrs |= winnt::FILE_ATTRIBUTE_DIRECTORY;
+			attrs |= FILE_ATTRIBUTE_DIRECTORY;
 		}
 		if attrs == 0 {
-			attrs = winnt::FILE_ATTRIBUTE_NORMAL
+			attrs = FILE_ATTRIBUTE_NORMAL
 		}
 		attrs
 	}
@@ -410,13 +429,13 @@ impl MemFsHandler {
 		name: &FullName,
 		attrs: u32,
 		delete_pending: bool,
-		creator_desc: winnt::PSECURITY_DESCRIPTOR,
-		token: ntdef::HANDLE,
+		creator_desc: PSECURITY_DESCRIPTOR,
+		token: HANDLE,
 		parent: &Arc<DirEntry>,
 		children: &mut HashMap<EntryName, Entry>,
 		is_dir: bool,
 	) -> OperationResult<CreateFileInfo<EntryHandle>> {
-		if attrs & winnt::FILE_ATTRIBUTE_READONLY > 0 && delete_pending {
+		if attrs & FILE_ATTRIBUTE_READONLY > 0 && delete_pending {
 			return Err(STATUS_CANNOT_DELETE);
 		}
 		let mut stat = Stat::new(
@@ -435,10 +454,11 @@ impl MemFsHandler {
 				None
 			} else {
 				let stream = Arc::new(RwLock::new(AltStream::new()));
-				assert!(stat
-					.alt_streams
-					.insert(EntryName(stream_info.name.to_owned()), Arc::clone(&stream))
-					.is_none());
+				assert!(
+					stat.alt_streams
+						.insert(EntryName(stream_info.name.to_owned()), Arc::clone(&stream))
+						.is_none()
+				);
 				Some(stream)
 			}
 		} else {
@@ -449,9 +469,11 @@ impl MemFsHandler {
 		} else {
 			Entry::File(Arc::new(FileEntry::new(stat)))
 		};
-		assert!(children
-			.insert(EntryName(name.file_name.to_owned()), entry.clone())
-			.is_none());
+		assert!(
+			children
+				.insert(EntryName(name.file_name.to_owned()), entry.clone())
+				.is_none()
+		);
 		parent.stat.write().unwrap().update_mtime(SystemTime::now());
 		let is_dir = is_dir && stream.is_some();
 		Ok(CreateFileInfo {
@@ -479,7 +501,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 		&'h self,
 		file_name: &U16CStr,
 		security_context: &IO_SECURITY_CONTEXT,
-		desired_access: winnt::ACCESS_MASK,
+		desired_access: ACCESS_MASK,
 		file_attributes: u32,
 		_share_access: u32,
 		create_disposition: u32,
@@ -502,18 +524,18 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 			let mut children = parent.children.write().unwrap();
 			if let Some(entry) = children.get(EntryNameRef::new(name.file_name)) {
 				let stat = entry.stat().read().unwrap();
-				let is_readonly = stat.attrs.value & winnt::FILE_ATTRIBUTE_READONLY > 0;
+				let is_readonly = stat.attrs.value & FILE_ATTRIBUTE_READONLY > 0;
 				let is_hidden_system = create_disposition == FILE_OVERWRITE_IF
-					&& (stat.attrs.value & winnt::FILE_ATTRIBUTE_HIDDEN > 0
-						&& !(file_attributes & winnt::FILE_ATTRIBUTE_HIDDEN > 0)
-						|| stat.attrs.value & winnt::FILE_ATTRIBUTE_SYSTEM > 0
-							&& !(file_attributes & winnt::FILE_ATTRIBUTE_SYSTEM > 0));
+					&& (stat.attrs.value & FILE_ATTRIBUTE_HIDDEN > 0
+						&& !(file_attributes & FILE_ATTRIBUTE_HIDDEN > 0)
+						|| stat.attrs.value & FILE_ATTRIBUTE_SYSTEM > 0
+							&& !(file_attributes & FILE_ATTRIBUTE_SYSTEM > 0));
 				if is_readonly && delete_pending {
 					return Err(STATUS_CANNOT_DELETE);
 				}
 				if is_readonly
-					&& (desired_access & winnt::FILE_WRITE_DATA > 0
-						|| desired_access & winnt::FILE_APPEND_DATA > 0)
+					&& (desired_access & FILE_WRITE_DATA > 0
+						|| desired_access & FILE_APPEND_DATA > 0)
 				{
 					return Err(STATUS_ACCESS_DENIED);
 				}
@@ -538,7 +560,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 									if create_disposition != FILE_SUPERSEDE && is_readonly {
 										return Err(STATUS_ACCESS_DENIED);
 									}
-									stat.attrs.value |= winnt::FILE_ATTRIBUTE_ARCHIVE;
+									stat.attrs.value |= FILE_ATTRIBUTE_ARCHIVE;
 									stat.update_mtime(SystemTime::now());
 									stream.write().unwrap().data.clear();
 								}
@@ -557,10 +579,14 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 							}
 							let stream = Arc::new(RwLock::new(AltStream::new()));
 							stat.update_atime(SystemTime::now());
-							assert!(stat
-								.alt_streams
-								.insert(EntryName(stream_info.name.to_owned()), Arc::clone(&stream))
-								.is_none());
+							assert!(
+								stat.alt_streams
+									.insert(
+										EntryName(stream_info.name.to_owned()),
+										Arc::clone(&stream)
+									)
+									.is_none()
+							);
 							Some((stream, true))
 						}
 					}
@@ -590,9 +616,8 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 								}
 								file.data.write().unwrap().clear();
 								let mut stat = file.stat.write().unwrap();
-								stat.attrs = Attributes::new(
-									file_attributes | winnt::FILE_ATTRIBUTE_ARCHIVE,
-								);
+								stat.attrs =
+									Attributes::new(file_attributes | FILE_ATTRIBUTE_ARCHIVE);
 								stat.update_mtime(SystemTime::now());
 							}
 							FILE_CREATE => return Err(STATUS_OBJECT_NAME_COLLISION),
@@ -653,7 +678,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 					} else {
 						self.create_new(
 							&name,
-							file_attributes | winnt::FILE_ATTRIBUTE_ARCHIVE,
+							file_attributes | FILE_ATTRIBUTE_ARCHIVE,
 							delete_pending,
 							security_context.AccessState.SecurityDescriptor,
 							token.as_raw_handle(),
@@ -692,12 +717,14 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 		context: &'c Self::Context,
 	) {
 		let mut stat = context.entry.stat().write().unwrap();
-		if let Some(mtime) = context.mtime_delayed.lock().unwrap().clone() {
+		let mtime_delayed = context.mtime_delayed.lock().unwrap().clone();
+		if let Some(mtime) = mtime_delayed {
 			if mtime > stat.mtime {
 				stat.mtime = mtime;
 			}
 		}
-		if let Some(atime) = context.atime_delayed.lock().unwrap().clone() {
+		let atime_delayed = context.atime_delayed.lock().unwrap().clone();
+		if let Some(atime) = atime_delayed {
 			if atime > stat.atime {
 				stat.atime = atime;
 			}
@@ -758,7 +785,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 			Err(STATUS_ACCESS_DENIED)
 		};
 		if ret.is_ok() {
-			context.entry.stat().write().unwrap().attrs.value |= winnt::FILE_ATTRIBUTE_ARCHIVE;
+			context.entry.stat().write().unwrap().attrs.value |= FILE_ATTRIBUTE_ARCHIVE;
 			let now = SystemTime::now();
 			if context.mtime_enabled.load(Ordering::Relaxed) {
 				*context.mtime_delayed.lock().unwrap() = Some(now);
@@ -885,7 +912,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 		info: &OperationInfo<'c, 'h, Self>,
 		context: &'c Self::Context,
 	) -> OperationResult<()> {
-		if context.entry.stat().read().unwrap().attrs.value & winnt::FILE_ATTRIBUTE_READONLY > 0 {
+		if context.entry.stat().read().unwrap().attrs.value & FILE_ATTRIBUTE_READONLY > 0 {
 			return Err(STATUS_CANNOT_DELETE);
 		}
 		let alt_stream = context.alt_stream.read().unwrap();
@@ -1001,10 +1028,11 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 						stream.data = data.clone();
 						data.clear();
 						let stream = Arc::new(RwLock::new(stream));
-						assert!(stat
-							.alt_streams
-							.insert(EntryName(dst_name.to_owned()), Arc::clone(&stream))
-							.is_none());
+						assert!(
+							stat.alt_streams
+								.insert(EntryName(dst_name.to_owned()), Arc::clone(&stream))
+								.is_none()
+						);
 						*context.alt_stream.write().unwrap() = Some(stream);
 					} else {
 						return Err(STATUS_OBJECT_NAME_INVALID);
@@ -1069,8 +1097,8 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 						Err(STATUS_ACCESS_DENIED)
 					} else {
 						let stat = entry.stat().read().unwrap();
-						let can_replace = stat.handle_count > 0
-							|| stat.attrs.value & winnt::FILE_ATTRIBUTE_READONLY > 0;
+						let can_replace =
+							stat.handle_count > 0 || stat.attrs.value & FILE_ATTRIBUTE_READONLY > 0;
 						std::mem::drop(stat);
 						if can_replace {
 							Err(STATUS_ACCESS_DENIED)
@@ -1088,9 +1116,11 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 				check_can_move(&mut children)?;
 				// Remove first in case moving to the same name.
 				let entry = children.remove(src_name_ref).unwrap();
-				assert!(children
-					.insert(EntryName(dst_name.file_name.to_owned()), entry)
-					.is_none());
+				assert!(
+					children
+						.insert(EntryName(dst_name.file_name.to_owned()), entry)
+						.is_none()
+				);
 				src_parent.stat.write().unwrap().update_mtime(now);
 				context.update_atime(&mut context.entry.stat().write().unwrap(), now);
 			} else {
@@ -1098,9 +1128,11 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 				let mut dst_children = dst_parent.children.write().unwrap();
 				check_can_move(&mut dst_children)?;
 				let entry = src_children.remove(src_name_ref).unwrap();
-				assert!(dst_children
-					.insert(EntryName(dst_name.file_name.to_owned()), entry)
-					.is_none());
+				assert!(
+					dst_children
+						.insert(EntryName(dst_name.file_name.to_owned()), entry)
+						.is_none()
+				);
 				src_parent.stat.write().unwrap().update_mtime(now);
 				dst_parent.stat.write().unwrap().update_mtime(now);
 				let mut stat = context.entry.stat().write().unwrap();
@@ -1195,11 +1227,11 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 			name: U16CString::from_str("dokan-rust memfs").unwrap(),
 			serial_number: 0,
 			max_component_length: path::MAX_COMPONENT_LENGTH,
-			fs_flags: winnt::FILE_CASE_PRESERVED_NAMES
-				| winnt::FILE_CASE_SENSITIVE_SEARCH
-				| winnt::FILE_UNICODE_ON_DISK
-				| winnt::FILE_PERSISTENT_ACLS
-				| winnt::FILE_NAMED_STREAMS,
+			fs_flags: FILE_CASE_PRESERVED_NAMES
+				| FILE_CASE_SENSITIVE_SEARCH
+				| FILE_UNICODE_ON_DISK
+				| FILE_PERSISTENT_ACLS
+				| FILE_NAMED_STREAMS,
 			// Custom names don't play well with UAC.
 			fs_name: U16CString::from_str("NTFS").unwrap(),
 		})
@@ -1221,7 +1253,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 		&'h self,
 		_file_name: &U16CStr,
 		security_information: u32,
-		security_descriptor: winnt::PSECURITY_DESCRIPTOR,
+		security_descriptor: PSECURITY_DESCRIPTOR,
 		buffer_length: u32,
 		_info: &OperationInfo<'c, 'h, Self>,
 		context: &'c Self::Context,
@@ -1239,7 +1271,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for MemFsHandler {
 		&'h self,
 		_file_name: &U16CStr,
 		security_information: u32,
-		security_descriptor: winnt::PSECURITY_DESCRIPTOR,
+		security_descriptor: PSECURITY_DESCRIPTOR,
 		_buffer_length: u32,
 		_info: &OperationInfo<'c, 'h, Self>,
 		context: &'c Self::Context,

@@ -8,21 +8,22 @@ use std::{
 };
 
 use bitflags::bitflags;
+use dokan_sys::SCHAR;
 use dokan_sys::{
-	DokanCloseHandle, DokanCreateFileSystem, DokanWaitForFileSystemClosed,
-	DOKAN_DRIVER_INSTALL_ERROR, DOKAN_DRIVE_LETTER_ERROR, DOKAN_ERROR, DOKAN_HANDLE,
-	DOKAN_MOUNT_ERROR, DOKAN_MOUNT_POINT_ERROR, DOKAN_OPERATIONS, DOKAN_OPTIONS,
-	DOKAN_OPTION_ALLOW_IPC_BATCHING, DOKAN_OPTION_ALT_STREAM, DOKAN_OPTION_CASE_SENSITIVE,
-	DOKAN_OPTION_CURRENT_SESSION, DOKAN_OPTION_DEBUG, DOKAN_OPTION_DISPATCH_DRIVER_LOGS,
+	DOKAN_DRIVE_LETTER_ERROR, DOKAN_DRIVER_INSTALL_ERROR, DOKAN_ERROR, DOKAN_HANDLE,
+	DOKAN_MOUNT_ERROR, DOKAN_MOUNT_POINT_ERROR, DOKAN_OPERATIONS, DOKAN_OPTION_ALLOW_IPC_BATCHING,
+	DOKAN_OPTION_ALT_STREAM, DOKAN_OPTION_CASE_SENSITIVE, DOKAN_OPTION_CURRENT_SESSION,
+	DOKAN_OPTION_DEBUG, DOKAN_OPTION_DISPATCH_DRIVER_LOGS,
 	DOKAN_OPTION_ENABLE_UNMOUNT_NETWORK_DRIVE, DOKAN_OPTION_FILELOCK_USER_MODE,
 	DOKAN_OPTION_MOUNT_MANAGER, DOKAN_OPTION_NETWORK, DOKAN_OPTION_REMOVABLE, DOKAN_OPTION_STDERR,
-	DOKAN_OPTION_WRITE_PROTECT, DOKAN_START_ERROR, DOKAN_SUCCESS, DOKAN_VERSION_ERROR,
+	DOKAN_OPTION_WRITE_PROTECT, DOKAN_OPTIONS, DOKAN_START_ERROR, DOKAN_SUCCESS,
+	DOKAN_VERSION_ERROR, DokanCloseHandle, DokanCreateFileSystem, DokanWaitForFileSystemClosed,
 	VOLUME_SECURITY_DESCRIPTOR_MAX_SIZE,
 };
 use widestring::U16CStr;
-use winapi::{shared::ntdef::SCHAR, um::winbase::INFINITE};
+use windows_sys::Win32::System::Threading::INFINITE;
 
-use crate::{file_system_handler::FileSystemHandler, operations, WRAPPER_VERSION};
+use crate::{WRAPPER_VERSION, file_system_handler::FileSystemHandler, operations};
 
 bitflags! {
 	/// Flags that control behavior of the mounted volume, as part of [`MountOptions`].
@@ -182,7 +183,9 @@ impl Display for FileSystemMountError {
 			FileSystemMountError::DriveLetter => "bad drive letter",
 			FileSystemMountError::DriverInstall => "can't install driver",
 			FileSystemMountError::Start => "the driver responds that something is wrong",
-			FileSystemMountError::Mount => "can't assign a drive letter or mount point, probably already used by another volume",
+			FileSystemMountError::Mount => {
+				"can't assign a drive letter or mount point, probably already used by another volume"
+			}
 			FileSystemMountError::MountPoint => "the mount point is invalid",
 			FileSystemMountError::Version => "requested an incompatible version",
 		};
@@ -315,7 +318,7 @@ fn can_fail_to_mount() {
 
 	use crate::{
 		init, shutdown,
-		usage_tests::{convert_str, TestHandler},
+		usage_tests::{TestHandler, convert_str},
 	};
 
 	let (tx, _rx) = mpsc::sync_channel(1024);

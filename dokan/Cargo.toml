@@ -10,22 +10,31 @@ keywords = ["dokan", "bindings", "driver", "filesystem"]
 categories = ["external-ffi-bindings"]
 readme = "README.md"
 license = "MIT"
-edition = "2021"
+edition = "2024"
 
 [badges]
 appveyor = { repository = "Liryna/dokan-rust" }
 
 [dependencies]
-bitflags = "2.9"
+bitflags = "2.11"
 dokan-sys = { path = "../dokan-sys" }
 widestring = "1.2"
-winapi = { version = "0.3", features = ["std", "errhandlingapi", "handleapi", "heapapi", "ioapiset", "minwinbase", "minwindef", "ntdef", "ntstatus", "processenv", "processthreadsapi", "sddl", "securitybaseapi", "synchapi", "winbase", "winerror", "winnt"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Environment",
+    "Win32_System_IO",
+    "Win32_System_Memory",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 clap = "4.5"
 ctrlc = "3.4"
-lazy_static = "1.5"
-parking_lot = "0.12"
 regex = "1.11"
 
 [package.metadata.docs.rs]

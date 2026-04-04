@@ -1,8 +1,9 @@
+use dokan_sys::ACCESS_MASK;
 use dokan_sys::DOKAN_IO_SECURITY_CONTEXT;
 use widestring::U16CStr;
-use winapi::{
-	shared::{ntdef::NTSTATUS, ntstatus::STATUS_NOT_IMPLEMENTED},
-	um::winnt::{ACCESS_MASK, PSECURITY_DESCRIPTOR},
+use windows_sys::Win32::{
+	Foundation::{NTSTATUS, STATUS_NOT_IMPLEMENTED},
+	Security::PSECURITY_DESCRIPTOR,
 };
 
 use crate::data::{
@@ -32,7 +33,7 @@ pub type OperationResult<T> = Result<T, NTSTATUS>;
 /// [`close_file`]: Self::close_file
 /// [`create_file`]: Self::create_file
 /// [`map_win32_error_to_ntstatus`]: crate::map_win32_error_to_ntstatus
-/// [`GetLastError`]: winapi::um::errhandlingapi::GetLastError
+/// [`GetLastError`]: windows_sys::Win32::Foundation::GetLastError
 #[allow(unused_variables)]
 pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	/// Type of the context associated with an open file object.
@@ -433,7 +434,7 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	///
 	/// See [`GetFileSecurity`] for more information.
 	///
-	/// [`STATUS_BUFFER_OVERFLOW`]: winapi::shared::ntstatus::STATUS_BUFFER_OVERFLOW
+	/// [`STATUS_BUFFER_OVERFLOW`]: windows_sys::Win32::Foundation::STATUS_BUFFER_OVERFLOW
 	/// [`GetFileSecurity`]: https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getfilesecuritya
 	fn get_file_security(
 		&'h self,

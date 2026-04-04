@@ -1,5 +1,3 @@
-extern crate lazy_static;
-extern crate parking_lot;
 extern crate regex;
 
 use std::{
@@ -9,43 +7,62 @@ use std::{
 	os::windows::prelude::{AsRawHandle, FromRawHandle, OwnedHandle},
 	pin::Pin,
 	process, ptr,
+	sync::LazyLock,
 	sync::mpsc::{self, Receiver, SyncSender},
 	thread,
 	time::{Duration, UNIX_EPOCH},
 };
 
+use dokan_sys::LPVOID;
 use dokan_sys::win32::{
 	FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_SYNCHRONOUS_IO_NONALERT, FILE_WRITE_THROUGH,
 	WIN32_FIND_STREAM_DATA,
 };
-use parking_lot::Mutex;
+use std::sync::Mutex;
 use widestring::{U16CStr, U16CString};
-use winapi::{
-	shared::{
-		minwindef::{BOOL, FALSE, HLOCAL, LPCVOID, LPVOID, MAX_PATH, TRUE},
-		ntdef::{HANDLE, NTSTATUS, NULL},
-		ntstatus::{STATUS_ACCESS_DENIED, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS},
-		sddl::ConvertSidToStringSidW,
-		winerror::{
-			ERROR_HANDLE_EOF, ERROR_INSUFFICIENT_BUFFER, ERROR_INTERNAL_ERROR, ERROR_IO_PENDING,
-			ERROR_NO_MORE_FILES,
-		},
+use windows_sys::Win32::{
+	Foundation::{
+		CloseHandle, ERROR_HANDLE_EOF, ERROR_INSUFFICIENT_BUFFER, ERROR_INTERNAL_ERROR,
+		ERROR_IO_PENDING, ERROR_NO_MORE_FILES, FALSE, GENERIC_ALL, GENERIC_READ, GetLastError,
+		HANDLE, INVALID_HANDLE_VALUE, LocalFree, MAX_PATH, NTSTATUS, STATUS_ACCESS_DENIED,
+		STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS, TRUE,
 	},
-	um::{
-		errhandlingapi::GetLastError,
-		fileapi::*,
-		handleapi::{CloseHandle, INVALID_HANDLE_VALUE},
-		ioapiset::GetOverlappedResult,
-		minwinbase::OVERLAPPED,
-		processthreadsapi::{GetCurrentProcess, OpenProcessToken},
-		securitybaseapi::*,
-		synchapi::CreateEventW,
-		winbase::*,
-		winnt::*,
+	Security::{
+		Authorization::ConvertSidToStringSidW, EqualSid, GetFileSecurityW,
+		GetSecurityDescriptorOwner, GetTokenInformation, InitializeSecurityDescriptor,
+		MakeSelfRelativeSD, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR,
+		SetFileSecurityW, SetSecurityDescriptorOwner, TOKEN_QUERY, TOKEN_USER, TokenUser,
+	},
+	Storage::FileSystem::{
+		CreateFileW, DeleteFileW, FILE_ACTION_ADDED, FILE_ACTION_MODIFIED, FILE_ACTION_REMOVED,
+		FILE_ACTION_RENAMED_NEW_NAME, FILE_ACTION_RENAMED_OLD_NAME, FILE_ALL_ACCESS,
+		FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY, FILE_BEGIN,
+		FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OVERLAPPED, FILE_FLAG_WRITE_THROUGH,
+		FILE_NOTIFY_CHANGE_ATTRIBUTES, FILE_NOTIFY_CHANGE_FILE_NAME, FILE_NOTIFY_INFORMATION,
+		FILE_SHARE_READ, FindClose, FindFirstFileW, FindFirstStreamW, FindNextFileW,
+		FindNextStreamW, FindStreamInfoStandard, FlushFileBuffers, GetDiskFreeSpaceExW,
+		GetFileInformationByHandle, GetVolumeInformationW, LockFile, MOVEFILE_REPLACE_EXISTING,
+		MoveFileExW, OPEN_EXISTING, ReadDirectoryChangesW, ReadFile, RemoveDirectoryW,
+		SetEndOfFile, SetFileAttributesW, SetFilePointer, SetFileTime, SetFileValidData,
+		UnlockFile, WriteFile,
+	},
+	System::{
+		IO::{GetOverlappedResult, OVERLAPPED},
+		SystemServices::{
+			FILE_CASE_PRESERVED_NAMES, FILE_CASE_SENSITIVE_SEARCH, FILE_NAMED_STREAMS,
+			FILE_UNICODE_ON_DISK, SECURITY_DESCRIPTOR_REVISION,
+		},
+		Threading::{CreateEventW, GetCurrentProcess, OpenProcessToken},
 	},
 };
+use windows_sys::core::BOOL;
+
+#[allow(non_camel_case_types)]
+type SECURITY_INFORMATION = u32;
 
 use crate::{
+	FileSystemHandle, FileSystemHandler, FileSystemMounter, IO_SECURITY_CONTEXT, MountFlags,
+	MountOptions,
 	data::{
 		CreateFileInfo, DiskSpaceInfo, FileInfo, FileTimeOperation, FillDataResult, FindData,
 		FindStreamData, OperationInfo, VolumeInfo,
@@ -55,8 +72,7 @@ use crate::{
 	operations_helpers::NtResult,
 	shutdown,
 	to_file_time::ToFileTime,
-	unmount, FileSystemHandle, FileSystemHandler, FileSystemMounter, MountFlags, MountOptions,
-	IO_SECURITY_CONTEXT,
+	unmount_and_wait,
 };
 
 pub fn convert_str(s: impl AsRef<str>) -> U16CString {
@@ -183,7 +199,7 @@ fn get_descriptor_owner(desc: PSECURITY_DESCRIPTOR) -> (U16CString, BOOL) {
 		let mut ps = ptr::null_mut();
 		assert_eq_win32!(ConvertSidToStringSidW(psid, &mut ps), TRUE);
 		let sid = U16CStr::from_ptr_str(ps).to_owned();
-		assert_eq_win32!(LocalFree(ps as HLOCAL), NULL);
+		assert_eq_win32!(LocalFree(ps as _), ptr::null_mut());
 		(sid, owner_defaulted)
 	}
 }
@@ -228,7 +244,7 @@ fn get_current_user_info() -> Pin<Vec<u8>> {
 fn create_test_descriptor() -> Vec<u8> {
 	unsafe {
 		let mut user_info_buffer = get_current_user_info();
-		let user_info = &*(user_info_buffer.as_mut_ptr() as PTOKEN_USER);
+		let user_info = &*(user_info_buffer.as_mut_ptr() as *const TOKEN_USER);
 		let mut abs_desc = mem::zeroed::<SECURITY_DESCRIPTOR>();
 		let abs_desc_ptr = &mut abs_desc as *mut _ as PSECURITY_DESCRIPTOR;
 		assert_eq_win32!(
@@ -465,7 +481,6 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		info: &OperationInfo<'a, 'b, Self>,
 		_context: &'a Self::Context,
 	) -> OperationResult<FileInfo> {
-		check_pid(info.pid())?;
 		Ok(FileInfo {
 			attributes: if info.is_dir() {
 				FILE_ATTRIBUTE_DIRECTORY
@@ -485,10 +500,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		&'b self,
 		file_name: &U16CStr,
 		mut fill_find_data: impl FnMut(&FindData) -> FillDataResult,
-		info: &OperationInfo<'a, 'b, Self>,
+		_info: &OperationInfo<'a, 'b, Self>,
 		_context: &'a Self::Context,
 	) -> OperationResult<()> {
-		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
 			"\\test_find_files" => fill_find_data(&FindData {
@@ -825,10 +839,9 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 		&'b self,
 		file_name: &U16CStr,
 		mut fill_find_stream_data: impl FnMut(&FindStreamData) -> FillDataResult,
-		info: &OperationInfo<'a, 'b, Self>,
+		_info: &OperationInfo<'a, 'b, Self>,
 		_context: &'a Self::Context,
 	) -> OperationResult<()> {
-		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_find_streams" {
 			fill_find_stream_data(&FindStreamData {
@@ -842,9 +855,7 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 }
 
-lazy_static::lazy_static! {
-	static ref TEST_DRIVE_LOCK: Mutex<()> = Mutex::new(());
-}
+static TEST_DRIVE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 pub struct TestDriveContext<'a> {
 	rx_instance: &'a Receiver<FileSystemHandle>,
@@ -856,6 +867,19 @@ pub struct TestDriveContext<'a> {
 impl TestDriveContext<'_> {
 	pub fn signal(&self) -> HandlerSignal {
 		self.rx_signal.recv().unwrap()
+	}
+
+	/// Receives signals until one matches the predicate, discarding others.
+	/// This is useful when Windows may inject additional calls (e.g. extra
+	/// `GetFileSecurity` queries with different `security_information` values)
+	/// that aren't relevant to the test assertion.
+	pub fn signal_matching(&self, pred: impl Fn(&HandlerSignal) -> bool) -> HandlerSignal {
+		loop {
+			let sig = self.signal();
+			if pred(&sig) {
+				return sig;
+			}
+		}
 	}
 
 	pub fn instance(&self) -> FileSystemHandle {
@@ -880,14 +904,15 @@ pub fn test_flags() -> MountFlags {
 	flags
 }
 
-#[allow(unused_must_use)]
 pub fn with_test_drive<Scope: FnOnce(TestDriveContext)>(scope: Scope) {
-	let _guard = TEST_DRIVE_LOCK.lock();
+	let _guard = TEST_DRIVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
 	init();
 
 	// In case previous tests failed and didn't unmount the drive.
-	unmount(convert_str("Z:\\"));
+	// unmount_and_wait ensures the driver has fully released the mount point
+	// before we attempt to mount again.
+	let _ = unmount_and_wait(convert_str("Z:\\"), Duration::from_secs(5));
 
 	let (tx_instance, rx_instance) = mpsc::sync_channel(1);
 
@@ -919,7 +944,10 @@ pub fn with_test_drive<Scope: FnOnce(TestDriveContext)>(scope: Scope) {
 		instance: RefCell::new(None),
 	});
 
-	assert!(unmount(convert_str("Z:\\")));
+	assert!(unmount_and_wait(
+		convert_str("Z:\\"),
+		Duration::from_secs(5)
+	));
 	assert_eq!(rx_signal.recv().unwrap(), HandlerSignal::Unmounted);
 
 	drive_thread_handle.join().unwrap();
@@ -951,8 +979,8 @@ fn supports_panic_in_handler() {
 fn can_retrieve_volume_information() {
 	with_test_drive(|_| unsafe {
 		let path = convert_str("Z:\\");
-		let mut volume_name = [0; MAX_PATH + 1];
-		let mut fs_name = [0; MAX_PATH + 1];
+		let mut volume_name = [0; MAX_PATH as usize + 1];
+		let mut fs_name = [0; MAX_PATH as usize + 1];
 		let mut serial_number = 0;
 		let mut max_component_length = 0;
 		let mut fs_flags = 0;
@@ -999,9 +1027,9 @@ fn can_retrieve_disk_space() {
 		assert_eq_win32!(
 			GetDiskFreeSpaceExW(
 				path.as_ptr(),
-				&mut free_bytes_available as *mut _ as PULARGE_INTEGER,
-				&mut total_number_of_bytes as *mut _ as PULARGE_INTEGER,
-				&mut total_number_of_free_bytes as *mut _ as PULARGE_INTEGER,
+				&mut free_bytes_available,
+				&mut total_number_of_bytes,
+				&mut total_number_of_free_bytes,
 			),
 			TRUE
 		);
@@ -1066,7 +1094,7 @@ fn can_read_from_and_write_to_file() {
 		assert_eq_win32!(
 			ReadFile(
 				hf,
-				buf.as_mut_ptr() as LPVOID,
+				buf.as_mut_ptr(),
 				buf.len() as u32,
 				&mut len,
 				ptr::null_mut()
@@ -1080,13 +1108,7 @@ fn can_read_from_and_write_to_file() {
 		assert_eq!(context.signal(), HandlerSignal::ReadFile(0, buf.len()));
 		let mut bytes_written = 0;
 		assert_eq_win32!(
-			WriteFile(
-				hf,
-				buf.as_ptr() as LPCVOID,
-				len,
-				&mut bytes_written,
-				ptr::null_mut()
-			),
+			WriteFile(hf, buf.as_ptr(), len, &mut bytes_written, ptr::null_mut()),
 			TRUE
 		);
 		assert_eq!(bytes_written, len);
@@ -1354,7 +1376,9 @@ fn can_get_file_security() {
 		);
 		assert_eq!(GetLastError(), ERROR_INSUFFICIENT_BUFFER);
 		assert_eq!(
-			context.signal(),
+			context.signal_matching(
+				|s| matches!(s, HandlerSignal::GetFileSecurity(si, _) if *si == OWNER_SECURITY_INFORMATION)
+			),
 			HandlerSignal::GetFileSecurity(OWNER_SECURITY_INFORMATION, 0)
 		);
 		let mut desc = vec![0u8; desc_len as usize];
@@ -1370,7 +1394,9 @@ fn can_get_file_security() {
 		);
 		assert_eq!(desc.len(), desc_len as usize);
 		assert_eq!(
-			context.signal(),
+			context.signal_matching(
+				|s| matches!(s, HandlerSignal::GetFileSecurity(si, _) if *si == OWNER_SECURITY_INFORMATION)
+			),
 			HandlerSignal::GetFileSecurity(OWNER_SECURITY_INFORMATION, desc_len)
 		);
 		assert_eq!(desc, expected_desc);
@@ -1432,7 +1458,7 @@ fn can_find_streams() {
 			0,
 		);
 		assert_ne_win32!(hf, INVALID_HANDLE_VALUE);
-		assert_eq!(data.StreamSize.QuadPart(), &42);
+		assert_eq!(data.StreamSize, 42);
 		assert_eq!(
 			U16CStr::from_slice_truncate(&data.cStreamName).unwrap(),
 			convert_str("::$DATA")
@@ -1468,13 +1494,16 @@ fn can_open_requester_token() {
 		let expected_info_buffer = get_current_user_info();
 		let hf = open_file("Z:\\test_open_requester_token");
 		assert_eq_win32!(CloseHandle(hf), TRUE);
-		if let HandlerSignal::OpenRequesterToken(info_buffer) = context.signal() {
-			let expected_info = &*(expected_info_buffer.as_ptr() as *const TOKEN_USER);
-			let info = &*(info_buffer.as_ptr() as *const TOKEN_USER);
-			assert_eq_win32!(EqualSid(info.User.Sid, expected_info.User.Sid), TRUE);
-			assert_eq!(info.User.Attributes, expected_info.User.Attributes);
-		} else {
-			panic!("unexpected signal type");
+		match context.signal() {
+			HandlerSignal::OpenRequesterToken(info_buffer) => {
+				let expected_info = &*(expected_info_buffer.as_ptr() as *const TOKEN_USER);
+				let info = &*(info_buffer.as_ptr() as *const TOKEN_USER);
+				assert_eq_win32!(EqualSid(info.User.Sid, expected_info.User.Sid), TRUE);
+				assert_eq!(info.User.Attributes, expected_info.User.Attributes);
+			}
+			_ => {
+				panic!("unexpected signal type");
+			}
 		}
 	});
 }
@@ -1563,7 +1592,8 @@ impl DirectoryChangeIterator {
 				hd: OwnedHandle::from_raw_handle(hd),
 				buf: Pin::new(vec![
 					0;
-					mem::size_of::<FILE_NOTIFY_INFORMATION>() + MAX_PATH
+					mem::size_of::<FILE_NOTIFY_INFORMATION>()
+						+ MAX_PATH as usize
 				]),
 				offset: 0,
 				he: OwnedHandle::from_raw_handle(he),

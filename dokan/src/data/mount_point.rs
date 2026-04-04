@@ -1,11 +1,11 @@
 use std::{iter::Map, mem::transmute, slice};
 
+use dokan_sys::ULONG;
 use dokan_sys::{
 	win32::{FILE_DEVICE_DISK_FILE_SYSTEM, FILE_DEVICE_NETWORK_FILE_SYSTEM},
 	*,
 };
 use widestring::U16CStr;
-use winapi::shared::minwindef::ULONG;
 
 /// Mount point device type.
 #[repr(u32)]
@@ -116,7 +116,7 @@ fn can_list_mount_points() {
 	use std::process;
 
 	use regex::Regex;
-	use winapi::{shared::minwindef::TRUE, um::processthreadsapi::ProcessIdToSessionId};
+	use windows_sys::Win32::{Foundation::TRUE, System::RemoteDesktop::ProcessIdToSessionId};
 
 	use crate::usage_tests::{convert_str, with_test_drive};
 
