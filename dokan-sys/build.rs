@@ -57,7 +57,8 @@ fn check_dokan_env(version_major: &str) -> bool {
 	let arch = match env::var("CARGO_CFG_TARGET_ARCH").unwrap().as_ref() {
 		"x86" => "x86",
 		"x86_64" => "x64",
-		_ => panic!("Unsupported target architecture!"),
+		"aarch64" => "ARM64",
+		other => panic!("Unsupported target architecture: {}", other),
 	};
 	let env_name = format!("DokanLibrary{}_LibraryPath_{}", version_major, arch);
 	println!("cargo:rerun-if-env-changed={}", env_name);

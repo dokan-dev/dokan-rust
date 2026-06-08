@@ -14,7 +14,7 @@ Generally, it is recommended to use the `dokan` crate, which has the unsafe raw 
 
 `dokan-sys`, which is also a dependency of `dokan`, requires the import library of the native Dokan library in order to link against it.
 
-If the `DokanLibrary2_LibraryPath_{ARCH}` environment variable exists (`{ARCH}` can be `x86` or `x64` depending on the architecture of your target platform), `dokan-sys` will look for the import library in the directory specified by the aforementioned environment variable. These environment variables are automatically set by Dokan's installer since v1.0.0.
+If the `DokanLibrary2_LibraryPath_{ARCH}` environment variable exists (`{ARCH}` can be `x86`, `x64`, or `ARM64` depending on the architecture of your target platform), `dokan-sys` will look for the import library in the directory specified by the aforementioned environment variable. These environment variables are automatically set by Dokan's installer since v1.0.0.
 
 Otherwise, `dokan-sys` will build the import library from bundled Dokan source code. The DLL file will be built as well and you can use the `DOKAN_DLL_OUTPUT_PATH` environment variable to have the build script copy it to the specified directory.
 
