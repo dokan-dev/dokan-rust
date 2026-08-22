@@ -1,28 +1,45 @@
 [package]
 name = "dokan-sys"
-version = "0.3.1+dokan230"
-authors = ["DDoSolitary <DDoSolitary@gmail.com>"]
+version.workspace = true
+authors.workspace = true
 description = "Raw FFI bindings for Dokan (user mode file system library for Windows)"
-homepage = "https://dokan-dev.github.io"
-repository = "https://github.com/dokan-dev/dokan-rust"
+homepage.workspace = true
+repository.workspace = true
 documentation = "https://dokan-dev.github.io/dokan-rust-doc/html/dokan_sys/"
 keywords = ["ffi", "dokan", "bindings", "driver", "filesystem"]
 categories = ["external-ffi-bindings"]
-readme = "README.md"
-license = "MIT"
-edition = "2021"
+readme = "README.crates-io.md"
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 links = "dokan"
 build = "build.rs"
+include = [
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/README.crates-io.md",
+    "/build.rs",
+    "/src/bindings.rs",
+    "/src/generate_version.c",
+    "/src/lib.rs",
+    "/src/win32.rs",
+    "/src/dokany/dokan/*.c",
+    "/src/dokany/dokan/*.def",
+    "/src/dokany/dokan/*.h",
+    "/src/dokany/dokan/*.i",
+    "/src/dokany/license.lgpl.txt",
+    "/src/dokany/license.mit.txt",
+    "/src/dokany/sys/public.h",
+]
 
 [badges]
 appveyor = { repository = "Liryna/dokan-rust" }
 
-[dependencies]
-libc = "0.2"
-winapi = { version = "0.3", features = ["std", "basetsd", "fileapi", "minwinbase", "minwindef", "ntdef", "winnt"] }
-
 [build-dependencies]
-cc = "1.2"
+cc.workspace = true
 
 [package.metadata.docs.rs]
 default-target = "x86_64-pc-windows-msvc"
+
+[lints]
+workspace = true

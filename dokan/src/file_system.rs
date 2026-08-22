@@ -1,28 +1,28 @@
 use std::{
+	any::Any,
 	error::Error,
 	fmt::{self, Display, Formatter},
-	marker::PhantomData,
-	mem::transmute,
 	ptr,
+	sync::{Arc, RwLock},
 	time::Duration,
 };
 
+use crate::{RuntimeGuard, WRAPPER_VERSION, file_system_handler::FileSystemHandler, operations};
 use bitflags::bitflags;
 use dokan_sys::{
-	DokanCloseHandle, DokanCreateFileSystem, DokanWaitForFileSystemClosed,
-	DOKAN_DRIVER_INSTALL_ERROR, DOKAN_DRIVE_LETTER_ERROR, DOKAN_ERROR, DOKAN_HANDLE,
-	DOKAN_MOUNT_ERROR, DOKAN_MOUNT_POINT_ERROR, DOKAN_OPERATIONS, DOKAN_OPTIONS,
-	DOKAN_OPTION_ALLOW_IPC_BATCHING, DOKAN_OPTION_ALT_STREAM, DOKAN_OPTION_CASE_SENSITIVE,
-	DOKAN_OPTION_CURRENT_SESSION, DOKAN_OPTION_DEBUG, DOKAN_OPTION_DISPATCH_DRIVER_LOGS,
+	DOKAN_DRIVE_LETTER_ERROR, DOKAN_DRIVER_INSTALL_ERROR, DOKAN_ERROR, DOKAN_HANDLE,
+	DOKAN_MOUNT_ERROR, DOKAN_MOUNT_POINT_ERROR, DOKAN_OPERATIONS, DOKAN_OPTION_ALLOW_IPC_BATCHING,
+	DOKAN_OPTION_ALT_STREAM, DOKAN_OPTION_CASE_SENSITIVE, DOKAN_OPTION_CURRENT_SESSION,
+	DOKAN_OPTION_DEBUG, DOKAN_OPTION_DISPATCH_DRIVER_LOGS,
 	DOKAN_OPTION_ENABLE_UNMOUNT_NETWORK_DRIVE, DOKAN_OPTION_FILELOCK_USER_MODE,
 	DOKAN_OPTION_MOUNT_MANAGER, DOKAN_OPTION_NETWORK, DOKAN_OPTION_REMOVABLE, DOKAN_OPTION_STDERR,
-	DOKAN_OPTION_WRITE_PROTECT, DOKAN_START_ERROR, DOKAN_SUCCESS, DOKAN_VERSION_ERROR,
+	DOKAN_OPTION_WRITE_PROTECT, DOKAN_OPTIONS, DOKAN_START_ERROR, DOKAN_SUCCESS,
+	DOKAN_VERSION_ERROR, DokanCloseHandle, DokanCreateFileSystem, DokanWaitForFileSystemClosed,
 	VOLUME_SECURITY_DESCRIPTOR_MAX_SIZE,
 };
-use widestring::U16CStr;
-use winapi::{shared::ntdef::SCHAR, um::winbase::INFINITE};
+use widestring::{U16CStr, U16CString};
 
-use crate::{file_system_handler::FileSystemHandler, operations, WRAPPER_VERSION};
+const INFINITE: u32 = u32::MAX;
 
 bitflags! {
 	/// Flags that control behavior of the mounted volume, as part of [`MountOptions`].
@@ -84,7 +84,8 @@ bitflags! {
 }
 
 /// Options for [`FileSystemMounter::new`].
-pub struct MountOptions<'a> {
+#[derive(Clone)]
+pub struct MountOptions {
 	/// Only use a single thread to process events. This is highly not recommended as can easily create a bottleneck.
 	pub single_thread: bool,
 
@@ -96,7 +97,7 @@ pub struct MountOptions<'a> {
 	/// See [Support for UNC Naming].
 	///
 	/// [Support for UNC Naming]: https://msdn.microsoft.com/en-us/library/windows/hardware/ff556761(v=vs.85).aspx
-	pub unc_name: Option<&'a U16CStr>,
+	pub unc_name: Option<U16CString>,
 
 	/// Max timeout of each request before Dokan gives up to wait events to complete.
 	/// Timeout request is a sign that the userland implementation is no longer able to properly manage requests in time.
@@ -121,19 +122,21 @@ pub struct MountOptions<'a> {
 	/// See [`InitializeSecurityDescriptor`].
 	///
 	/// [`InitializeSecurityDescriptor`]: https://docs.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-initializesecuritydescriptor
-	pub volume_security_descriptor: Option<[SCHAR; VOLUME_SECURITY_DESCRIPTOR_MAX_SIZE]>,
+	/// The descriptor must be self-relative and no larger than
+	/// [`VOLUME_SECURITY_DESCRIPTOR_MAX_SIZE`] bytes.
+	pub volume_security_descriptor: Option<Vec<u8>>,
 }
 
-impl Default for MountOptions<'_> {
+impl Default for MountOptions {
 	fn default() -> Self {
 		Self {
-			single_thread: Default::default(),
+			single_thread: false,
 			flags: MountFlags::empty(),
-			unc_name: Default::default(),
-			timeout: Default::default(),
-			allocation_unit_size: Default::default(),
-			sector_size: Default::default(),
-			volume_security_descriptor: Default::default(),
+			unc_name: None,
+			timeout: Duration::ZERO,
+			allocation_unit_size: 0,
+			sector_size: 0,
+			volume_security_descriptor: None,
 		}
 	}
 }
@@ -169,7 +172,15 @@ pub enum FileSystemMountError {
 
 impl From<i32> for FileSystemMountError {
 	fn from(value: i32) -> Self {
-		unsafe { transmute(value) }
+		match value {
+			DOKAN_DRIVE_LETTER_ERROR => Self::DriveLetter,
+			DOKAN_DRIVER_INSTALL_ERROR => Self::DriverInstall,
+			DOKAN_START_ERROR => Self::Start,
+			DOKAN_MOUNT_ERROR => Self::Mount,
+			DOKAN_MOUNT_POINT_ERROR => Self::MountPoint,
+			DOKAN_VERSION_ERROR => Self::Version,
+			_ => Self::General,
+		}
 	}
 }
 
@@ -182,97 +193,142 @@ impl Display for FileSystemMountError {
 			FileSystemMountError::DriveLetter => "bad drive letter",
 			FileSystemMountError::DriverInstall => "can't install driver",
 			FileSystemMountError::Start => "the driver responds that something is wrong",
-			FileSystemMountError::Mount => "can't assign a drive letter or mount point, probably already used by another volume",
+			FileSystemMountError::Mount => {
+				"can't assign a drive letter or mount point, probably already used by another volume"
+			}
 			FileSystemMountError::MountPoint => "the mount point is invalid",
 			FileSystemMountError::Version => "requested an incompatible version",
 		};
-		write!(f, "{}", msg)
+		write!(f, "{msg}")
 	}
 }
 
-/// A mounter of [`FileSystem`].
-pub struct FileSystemMounter<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h> {
+struct MountState<FSH: FileSystemHandler> {
+	_runtime: RuntimeGuard,
+	// Boxed separately so the pointer stored in GlobalContext is stable.
+	_handler: Arc<FSH>,
+	_mount_point: U16CString,
+	_unc_name: Option<U16CString>,
 	options: DOKAN_OPTIONS,
 	operations: DOKAN_OPERATIONS,
-	phantom_handler: PhantomData<&'h FSH>,
-	phantom_context: PhantomData<&'c FSH::Context>,
 }
 
-impl<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h> FileSystemMounter<'c, 'h, FSH> {
-	/// Creates a file system. It should be `mut`, as [`mount`](Self::mount) requires it.
+/// An owned, configured filesystem ready to mount.
+///
+/// All strings and callback state are owned by this value. Nothing passed to
+/// [`new`](Self::new) is borrowed by Dokany.
+pub struct FileSystemMounter<FSH: FileSystemHandler> {
+	state: Box<MountState<FSH>>,
+}
+
+impl<FSH: FileSystemHandler> FileSystemMounter<FSH> {
+	/// Creates an owned filesystem configuration.
 	///
 	/// # Arguments
 	///
 	/// * `handler` - Implements [`FileSystemHandler`].
 	/// * `mount_point`- Can be a driver letter like `"M"` or a folder path `"C:\mount\dokan"` on a NTFS partition.
 	/// * `options` - Customizes behavior.
-	pub fn new(handler: &'h FSH, mount_point: &'h U16CStr, options: &'h MountOptions) -> Self {
+	///
+	/// # Panics
+	///
+	/// Panics if the volume security descriptor is larger than
+	/// [`VOLUME_SECURITY_DESCRIPTOR_MAX_SIZE`].
+	pub fn new(handler: FSH, mount_point: impl AsRef<U16CStr>, options: MountOptions) -> Self {
+		let handler = Arc::new(handler);
+		let mount_point = mount_point.as_ref().to_owned();
+		let unc_name = options.unc_name;
+		let mut volume_security_descriptor = [0; VOLUME_SECURITY_DESCRIPTOR_MAX_SIZE];
+		let volume_security_descriptor_length = options
+			.volume_security_descriptor
+			.as_ref()
+			.map_or(0, Vec::len);
+		assert!(
+			volume_security_descriptor_length <= VOLUME_SECURITY_DESCRIPTOR_MAX_SIZE,
+			"volume security descriptor exceeds Dokany's maximum size"
+		);
+		if let Some(descriptor) = options.volume_security_descriptor {
+			for (destination, source) in volume_security_descriptor.iter_mut().zip(descriptor) {
+				*destination = i8::from_ne_bytes([source]);
+			}
+		}
+		let raw_options = DOKAN_OPTIONS {
+			Version: u16::try_from(WRAPPER_VERSION)
+				.expect("the bundled Dokany version must fit in DOKAN_OPTIONS::Version"),
+			SingleThread: options.single_thread.into(),
+			Options: options.flags.bits(),
+			GlobalContext: Arc::as_ptr(&handler) as u64,
+			MountPoint: mount_point.as_ptr(),
+			UNCName: unc_name.as_ref().map_or(ptr::null(), |name| name.as_ptr()),
+			Timeout: duration_millis(options.timeout),
+			AllocationUnitSize: options.allocation_unit_size,
+			SectorSize: options.sector_size,
+			VolumeSecurityDescriptorLength: u32::try_from(volume_security_descriptor_length)
+				.expect("Dokany's maximum security descriptor size fits in u32"),
+			VolumeSecurityDescriptor: volume_security_descriptor,
+		};
+		let operations = DOKAN_OPERATIONS {
+			ZwCreateFile: Some(operations::create_file::<FSH>),
+			Cleanup: Some(operations::cleanup::<FSH>),
+			CloseFile: Some(operations::close_file::<FSH>),
+			ReadFile: Some(operations::read_file::<FSH>),
+			WriteFile: Some(operations::write_file::<FSH>),
+			FlushFileBuffers: Some(operations::flush_file_buffers::<FSH>),
+			GetFileInformation: Some(operations::get_file_information::<FSH>),
+			FindFiles: Some(operations::find_files::<FSH>),
+			FindFilesWithPattern: Some(operations::find_files_with_pattern::<FSH>),
+			SetFileAttributesW: Some(operations::set_file_attributes::<FSH>),
+			SetFileTime: Some(operations::set_file_time::<FSH>),
+			DeleteFileW: Some(operations::delete_file::<FSH>),
+			DeleteDirectory: Some(operations::delete_directory::<FSH>),
+			MoveFileW: Some(operations::move_file::<FSH>),
+			SetEndOfFile: Some(operations::set_end_of_file::<FSH>),
+			SetAllocationSize: Some(operations::set_allocation_size::<FSH>),
+			LockFile: Some(operations::lock_file::<FSH>),
+			UnlockFile: Some(operations::unlock_file::<FSH>),
+			GetDiskFreeSpaceW: Some(operations::get_disk_free_space::<FSH>),
+			GetVolumeInformationW: Some(operations::get_volume_information::<FSH>),
+			Mounted: Some(operations::mounted::<FSH>),
+			Unmounted: Some(operations::unmounted::<FSH>),
+			GetFileSecurityW: Some(operations::get_file_security::<FSH>),
+			SetFileSecurityW: Some(operations::set_file_security::<FSH>),
+			FindStreams: Some(operations::find_streams::<FSH>),
+		};
 		Self {
-			options: DOKAN_OPTIONS {
-				Version: WRAPPER_VERSION as u16,
-				SingleThread: options.single_thread.into(),
-				Options: options.flags.bits(),
-				GlobalContext: handler as *const _ as u64,
-				MountPoint: mount_point.as_ptr(),
-				UNCName: match options.unc_name {
-					Some(s) => s.as_ptr(),
-					None => ptr::null(),
-				},
-				Timeout: options.timeout.as_millis() as u32,
-				AllocationUnitSize: options.allocation_unit_size,
-				SectorSize: options.sector_size,
-				VolumeSecurityDescriptorLength: match options.volume_security_descriptor {
-					Some(_) => VOLUME_SECURITY_DESCRIPTOR_MAX_SIZE as u32,
-					None => 0,
-				},
-				VolumeSecurityDescriptor: options
-					.volume_security_descriptor
-					.unwrap_or([0; VOLUME_SECURITY_DESCRIPTOR_MAX_SIZE]),
-			},
-			operations: DOKAN_OPERATIONS {
-				ZwCreateFile: Some(operations::create_file::<'c, 'h, FSH>),
-				Cleanup: Some(operations::cleanup::<'c, 'h, FSH>),
-				CloseFile: Some(operations::close_file::<'c, 'h, FSH>),
-				ReadFile: Some(operations::read_file::<'c, 'h, FSH>),
-				WriteFile: Some(operations::write_file::<'c, 'h, FSH>),
-				FlushFileBuffers: Some(operations::flush_file_buffers::<'c, 'h, FSH>),
-				GetFileInformation: Some(operations::get_file_information::<'c, 'h, FSH>),
-				FindFiles: Some(operations::find_files::<'c, 'h, FSH>),
-				FindFilesWithPattern: Some(operations::find_files_with_pattern::<'c, 'h, FSH>),
-				SetFileAttributes: Some(operations::set_file_attributes::<'c, 'h, FSH>),
-				SetFileTime: Some(operations::set_file_time::<'c, 'h, FSH>),
-				DeleteFile: Some(operations::delete_file::<'c, 'h, FSH>),
-				DeleteDirectory: Some(operations::delete_directory::<'c, 'h, FSH>),
-				MoveFile: Some(operations::move_file::<'c, 'h, FSH>),
-				SetEndOfFile: Some(operations::set_end_of_file::<'c, 'h, FSH>),
-				SetAllocationSize: Some(operations::set_allocation_size::<'c, 'h, FSH>),
-				LockFile: Some(operations::lock_file::<'c, 'h, FSH>),
-				UnlockFile: Some(operations::unlock_file::<'c, 'h, FSH>),
-				GetDiskFreeSpace: Some(operations::get_disk_free_space::<'c, 'h, FSH>),
-				GetVolumeInformation: Some(operations::get_volume_information::<'c, 'h, FSH>),
-				Mounted: Some(operations::mounted::<'c, 'h, FSH>),
-				Unmounted: Some(operations::unmounted::<'c, 'h, FSH>),
-				GetFileSecurity: Some(operations::get_file_security::<'c, 'h, FSH>),
-				SetFileSecurity: Some(operations::set_file_security::<'c, 'h, FSH>),
-				FindStreams: Some(operations::find_streams::<'c, 'h, FSH>),
-			},
-			phantom_handler: PhantomData,
-			phantom_context: PhantomData,
+			state: Box::new(MountState {
+				_runtime: RuntimeGuard::acquire(),
+				_handler: handler,
+				_mount_point: mount_point,
+				_unc_name: unc_name,
+				options: raw_options,
+				operations,
+			}),
 		}
 	}
 
-	/// Mounts the file system. If successful, blocks the current thread until the file system gets unmounted.
-	pub fn mount(&mut self) -> Result<FileSystem<'c, 'h, FSH>, FileSystemMountError> {
+	/// Mounts the filesystem without blocking the calling thread.
+	///
+	/// # Errors
+	///
+	/// Returns a [`FileSystemMountError`] when Dokany cannot create or mount the
+	/// configured filesystem.
+	pub fn mount(mut self) -> Result<FileSystem, FileSystemMountError> {
 		let mut instance = ptr::null_mut();
 
 		let result = unsafe {
-			DokanCreateFileSystem(&mut self.options, &mut self.operations, &mut instance)
+			DokanCreateFileSystem(
+				&raw mut self.state.options,
+				&raw mut self.state.operations,
+				&raw mut instance,
+			)
 		};
 
 		if result == DOKAN_SUCCESS {
 			Ok(FileSystem {
-				instance,
-				_pin: PhantomData,
+				instance: Arc::new(FileSystemInstance {
+					raw: RwLock::new(Some(instance as usize)),
+					_state: self.state,
+				}),
 			})
 		} else {
 			Err(result.into())
@@ -280,67 +336,119 @@ impl<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h> FileSystemMounter<'c, 'h, 
 	}
 }
 
+fn duration_millis(duration: Duration) -> u32 {
+	u32::try_from(duration.as_millis()).unwrap_or(u32::MAX)
+}
+
+unsafe impl<FSH: FileSystemHandler> Send for MountState<FSH> {}
+unsafe impl<FSH: FileSystemHandler> Sync for MountState<FSH> {}
+
 /// A successfully mounted file system.
 ///
 /// When dropped, the current thread will block until the file system gets unmounted.
-pub struct FileSystem<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h> {
-	instance: DOKAN_HANDLE,
-	_pin: PhantomData<&'h FileSystemMounter<'c, 'h, FSH>>,
+pub struct FileSystem {
+	instance: Arc<FileSystemInstance>,
 }
 
-impl<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h> FileSystem<'c, 'h, FSH> {
+impl FileSystem {
+	/// Returns a cloneable handle used by notification functions.
+	#[must_use]
 	pub fn instance(&self) -> FileSystemHandle {
-		FileSystemHandle(self.instance)
+		FileSystemHandle(Arc::clone(&self.instance))
 	}
 }
 
-impl<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h> PartialEq for FileSystem<'c, 'h, FSH> {
+impl PartialEq for FileSystem {
 	fn eq(&self, other: &Self) -> bool {
-		self.instance == other.instance
+		Arc::ptr_eq(&self.instance, &other.instance)
 	}
 }
 
-impl<'c, 'h: 'c, FSH: FileSystemHandler<'c, 'h> + 'h> Drop for FileSystem<'c, 'h, FSH> {
+impl Drop for FileSystem {
 	fn drop(&mut self) {
 		unsafe {
-			DokanWaitForFileSystemClosed(self.instance, INFINITE);
-			DokanCloseHandle(self.instance);
+			DokanWaitForFileSystemClosed(self.instance.raw(), INFINITE);
 		}
+		self.instance.close();
 	}
-}
-
-#[test]
-fn can_fail_to_mount() {
-	use std::sync::mpsc;
-
-	use crate::{
-		init, shutdown,
-		usage_tests::{convert_str, TestHandler},
-	};
-
-	let (tx, _rx) = mpsc::sync_channel(1024);
-
-	init();
-
-	{
-		let mount_point = convert_str("0");
-		let handler = TestHandler::new(tx);
-		let options = Default::default();
-		let mut file_system = FileSystemMounter::new(&handler, &mount_point, &options);
-		match file_system.mount() {
-			Ok(_) => panic!("file system successfully mounted, but it should not"),
-			Err(err) => assert_eq!(err, FileSystemMountError::Mount),
-		};
-	}
-
-	shutdown();
 }
 
 /// A handle to a [`FileSystem`] instance, to be passed to `notify_*` functions.
 ///
-/// Warning: because it is meant to be sent across threads, the handle bypasses its file system's lifetime.
-/// Therefore, ensure you do not use it after the file system is unmounted.
-#[derive(Clone, Copy)]
-pub struct FileSystemHandle(pub(crate) DOKAN_HANDLE);
+struct FileSystemInstance {
+	raw: RwLock<Option<usize>>,
+	_state: Box<dyn Any + Send + Sync>,
+}
 
-unsafe impl Send for FileSystemHandle {}
+// Dokany explicitly supports using an instance from multiple threads.
+unsafe impl Send for FileSystemInstance {}
+unsafe impl Sync for FileSystemInstance {}
+
+impl FileSystemInstance {
+	fn raw(&self) -> DOKAN_HANDLE {
+		self.raw
+			.read()
+			.expect("filesystem handle lock poisoned")
+			.expect("filesystem handle already closed") as DOKAN_HANDLE
+	}
+
+	fn close(&self) {
+		if let Some(raw) = self
+			.raw
+			.write()
+			.expect("filesystem handle lock poisoned")
+			.take()
+		{
+			unsafe { DokanCloseHandle(raw as DOKAN_HANDLE) }
+		}
+	}
+}
+
+/// A shared, owning handle to a filesystem instance.
+///
+/// Clones keep the native Dokany handle allocated. Once the filesystem is
+/// unmounted, notification calls safely fail instead of accessing freed memory.
+#[derive(Clone)]
+pub struct FileSystemHandle(Arc<FileSystemInstance>);
+
+impl FileSystemHandle {
+	pub(crate) fn with_raw(&self, f: impl FnOnce(DOKAN_HANDLE) -> bool) -> bool {
+		let raw = self.0.raw.read().expect("filesystem handle lock poisoned");
+		raw.is_some_and(|raw| f(raw as DOKAN_HANDLE))
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn timeout_conversion_saturates_at_the_native_limit() {
+		assert_eq!(duration_millis(Duration::ZERO), 0);
+		assert_eq!(duration_millis(Duration::from_millis(42)), 42);
+		assert_eq!(
+			duration_millis(Duration::from_millis(u64::from(u32::MAX) + 1)),
+			u32::MAX
+		);
+	}
+
+	#[test]
+	fn mount_errors_have_stable_native_mappings() {
+		assert_eq!(
+			FileSystemMountError::from(DOKAN_DRIVE_LETTER_ERROR),
+			FileSystemMountError::DriveLetter
+		);
+		assert_eq!(
+			FileSystemMountError::from(DOKAN_VERSION_ERROR),
+			FileSystemMountError::Version
+		);
+		assert_eq!(
+			FileSystemMountError::from(i32::MAX),
+			FileSystemMountError::General
+		);
+		assert_eq!(
+			FileSystemMountError::MountPoint.to_string(),
+			"the mount point is invalid"
+		);
+	}
+}

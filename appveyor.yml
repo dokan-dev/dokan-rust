@@ -5,15 +5,20 @@ branches:
 environment:
   DOKAN_CONSOLE_DEBUG_LOG: 1
   RUST_BACKTRACE: 1
+  RUSTDOCFLAGS: -D warnings
   AccessTokenDokanDoc:
     secure: Z5/daTZ6OJaDbslmhxSxxB6leKaqHTnTbISy153Y4cdJm/oTAbDHaofb9TqvKXV1
   matrix:
     - ARCH: x86_64
       TOOLCHAIN: msvc
+      QUALITY_GATES: "true"
       UPLOAD_DOC: "true"
     - ARCH: x86_64
       TOOLCHAIN: msvc
       USE_INSTALLED_LIB: "true"
+    - ARCH: x86_64
+      TOOLCHAIN: msvc
+      RUST_VERSION: "1.85.0"
     - ARCH: i686
       TOOLCHAIN: msvc
     - ARCH: i686
@@ -73,9 +78,16 @@ install:
 
   - ps: |
       Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile "$Env:TEMP\rustup-init.exe"
-      & "$Env:TEMP\rustup-init.exe" -y --default-host "$Env:ARCH-pc-windows-$Env:TOOLCHAIN"
+      $RustVersion = if ($Env:RUST_VERSION) { $Env:RUST_VERSION } else { "stable" }
+      & "$Env:TEMP\rustup-init.exe" -y --default-host "$Env:ARCH-pc-windows-$Env:TOOLCHAIN" --default-toolchain $RustVersion
       CheckLastExitCode
       $Env:PATH = "$Env:PATH;C:\Users\appveyor\.cargo\bin"
+      if ($Env:QUALITY_GATES -eq "true") {
+          ExecuteExe rustup component add clippy rustfmt
+          ExecuteExe rustup component add llvm-tools-preview
+          ExecuteExe cargo install cargo-deny --version 0.20.2 --locked
+          ExecuteExe cargo install cargo-llvm-cov --version 0.8.7 --locked
+      }
 
 before_build:
   - ps: $Version = (git describe --tags)
@@ -84,15 +96,29 @@ before_build:
   - ps: |
       if ($Env:USE_INSTALLED_LIB -ne $true) {
           $Env:DOKAN_DLL_OUTPUT_PATH = "$Env:APPVEYOR_BUILD_FOLDER\target\release"
+          $Env:PATH = "$Env:DOKAN_DLL_OUTPUT_PATH;$Env:PATH"
+      }
+  - ps: |
+      if ($Env:QUALITY_GATES -eq "true") {
+          & .\scripts\check-workspace-policy.ps1
+          CheckLastExitCode
+          ExecuteExe cargo fmt --all -- --check
+          ExecuteExe cargo clippy --workspace --all-targets --all-features --locked
+          ExecuteExe cargo deny --locked check
+          ExecuteExe cargo package -p dokan-sys -p dokan --locked
       }
 
 build_script:
-  - cmd: cargo build --release --workspace --all-targets
-  - cmd: cargo doc --release --workspace
+  - cmd: cargo build --release --workspace --all-targets --all-features --locked
+  - cmd: cargo doc --release --workspace --all-features --locked --no-deps
 
 test_script:
-  - cmd: cargo test --release --workspace
-  - cmd: cargo test --release --workspace -- --ignored
+  - cmd: cargo test --release --workspace --all-features --locked -- --test-threads=1
+  - cmd: cargo test --release --workspace --all-features --locked -- --ignored --test-threads=1
+  - ps: |
+      if ($Env:QUALITY_GATES -eq "true") {
+          ExecuteExe cargo llvm-cov --workspace --all-features --locked --summary-only --fail-under-lines 75 -- --test-threads=1
+      }
 
 deploy_script:
   - ps: |
@@ -139,9 +165,9 @@ for:
           "@
 
     build_script:
-      - ps: ExecuteBash 'cargo build --release --workspace --all-targets'
-      - ps: ExecuteBash 'cargo doc --release --workspace'
+      - ps: ExecuteBash 'cargo build --release --workspace --all-targets --all-features --locked'
+      - ps: ExecuteBash 'cargo doc --release --workspace --all-features --locked --no-deps'
 
     test_script:
-      - ps: ExecuteBash 'cargo test --release --workspace'
-      - ps: ExecuteBash 'cargo test --release --workspace -- --ignored'
+      - ps: ExecuteBash 'cargo test --release --workspace --all-features --locked -- --test-threads=1'
+      - ps: ExecuteBash 'cargo test --release --workspace --all-features --locked -- --ignored --test-threads=1'

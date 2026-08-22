@@ -7,6 +7,7 @@ mod find_data;
 mod mount_point;
 mod operation_info;
 mod volume_info;
+mod wide_string_ref;
 
 pub use create_file_info::*;
 pub use disk_space_info::*;
@@ -17,3 +18,4 @@ pub use find_data::*;
 pub use mount_point::*;
 pub use operation_info::*;
 pub use volume_info::*;
+pub use wide_string_ref::*;

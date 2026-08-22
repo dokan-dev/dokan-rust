@@ -1,12 +1,12 @@
-use widestring::U16CString;
+use crate::{VolumeFeatures, WideStringRef};
 
 /// Information about volume returned by [`FileSystemHandler::get_volume_information`].
 ///
 /// [`FileSystemHandler::get_volume_information`]: crate::FileSystemHandler::get_volume_information
-#[derive(Debug, Clone)]
-pub struct VolumeInfo {
+#[derive(Debug, Clone, Copy)]
+pub struct VolumeInfo<'a> {
 	/// Name of the volume.
-	pub name: U16CString,
+	pub name: WideStringRef<'a>,
 
 	/// Serial number of the volume.
 	pub serial_number: u32,
@@ -23,11 +23,11 @@ pub struct VolumeInfo {
 	///
 	/// [flags]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumeinformationw#parameters
 	/// [`MountFlags::WRITE_PROTECT`]: crate::MountFlags::WRITE_PROTECT
-	pub fs_flags: u32,
+	pub features: VolumeFeatures,
 
 	/// Name of the file system.
 	///
 	/// Windows checks feature availability based on file system name, so it is recommended to set
 	/// it to well-known names like NTFS or FAT.
-	pub fs_name: U16CString,
+	pub fs_name: WideStringRef<'a>,
 }

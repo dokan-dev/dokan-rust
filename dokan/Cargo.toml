@@ -1,32 +1,41 @@
 [package]
 name = "dokan"
-version = "0.3.1+dokan230"
-authors = ["DDoSolitary <DDoSolitary@gmail.com>"]
+version.workspace = true
+authors.workspace = true
 description = "Rust-friendly wrapper for Dokan (user mode file system library for Windows)"
-homepage = "https://dokan-dev.github.io"
-repository = "https://github.com/dokan-dev/dokan-rust"
+homepage.workspace = true
+repository.workspace = true
 documentation = "https://dokan-dev.github.io/dokan-rust-doc/html/dokan/"
 keywords = ["dokan", "bindings", "driver", "filesystem"]
 categories = ["external-ffi-bindings"]
-readme = "README.md"
-license = "MIT"
-edition = "2021"
+readme = "README.crates-io.md"
+exclude = ["README.md"]
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 
 [badges]
 appveyor = { repository = "Liryna/dokan-rust" }
 
+[features]
+default = []
+windows-interop = ["dep:windows"]
+
 [dependencies]
-bitflags = "2.9"
-dokan-sys = { path = "../dokan-sys" }
-widestring = "1.2"
-winapi = { version = "0.3", features = ["std", "errhandlingapi", "handleapi", "heapapi", "ioapiset", "minwinbase", "minwindef", "ntdef", "ntstatus", "processenv", "processthreadsapi", "sddl", "securitybaseapi", "synchapi", "winbase", "winerror", "winnt"] }
+bitflags.workspace = true
+dokan-sys.workspace = true
+widestring.workspace = true
+windows = { workspace = true, features = ["Win32_Foundation"], optional = true }
 
 [dev-dependencies]
-clap = "4.5"
-ctrlc = "3.4"
-lazy_static = "1.5"
-parking_lot = "0.12"
-regex = "1.11"
+clap.workspace = true
+ctrlc.workspace = true
+parking_lot.workspace = true
+regex.workspace = true
+winapi = { workspace = true, features = ["std", "errhandlingapi", "handleapi", "heapapi", "ioapiset", "minwinbase", "minwindef", "ntdef", "ntstatus", "processenv", "processthreadsapi", "sddl", "securitybaseapi", "synchapi", "winbase", "winerror", "winnt"] }
 
 [package.metadata.docs.rs]
 default-target = "x86_64-pc-windows-msvc"
+
+[lints]
+workspace = true

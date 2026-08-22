@@ -1,3 +1,5 @@
+//! Builds or locates the native Dokany user-mode library used by `dokan-sys`.
+
 extern crate cc;
 
 use std::{
@@ -6,22 +8,6 @@ use std::{
 };
 
 use cc::{Build, Tool};
-
-fn print_env(compiler: &Tool) {
-	eprintln!("Environment variables:");
-	for (k, v) in env::vars() {
-		eprintln!("{}={}", k, v);
-	}
-	eprintln!("\nCompiler:\n{}", compiler.path().to_string_lossy());
-	eprintln!("\nCompiler arguments:");
-	for arg in compiler.args().iter() {
-		eprintln!("{}", arg.to_string_lossy());
-	}
-	eprintln!("\nCompiler environment variables:");
-	for (k, v) in compiler.env().iter() {
-		eprintln!("{}={}", k.to_string_lossy(), v.to_string_lossy());
-	}
-}
 
 fn run_generator(compiler: &Tool) -> String {
 	let out_dir = env::var("OUT_DIR").unwrap();
@@ -33,24 +19,24 @@ fn run_generator(compiler: &Tool) -> String {
 		.arg("-Isrc/dokany/sys");
 	if compiler.is_like_msvc() {
 		compiler_cmd
-			.arg(format!("/Fo{}/", out_dir))
+			.arg(format!("/Fo{out_dir}/"))
 			.arg("src/generate_version.c")
 			.arg("/link")
-			.arg(format!("/OUT:{}/generate_version.exe", out_dir))
+			.arg(format!("/OUT:{out_dir}/generate_version.exe"))
 	} else {
 		compiler_cmd
-			.arg(format!("-o{}/generate_version.exe", out_dir))
+			.arg(format!("-o{out_dir}/generate_version.exe"))
 			.arg("src/generate_version.c")
 	};
 	assert!(compiler_cmd.output().unwrap().status.success());
-	let generate_output = Command::new(format!("{}/generate_version.exe", out_dir))
+	let generate_output = Command::new(format!("{out_dir}/generate_version.exe"))
 		.current_dir(&out_dir)
 		.output()
 		.unwrap();
 	assert!(generate_output.status.success());
 	println!("cargo:rerun-if-changed=src/generate_version.c");
 
-	String::from_utf8(fs::read(format!("{}/version.txt", out_dir)).unwrap()).unwrap()
+	String::from_utf8(fs::read(format!("{out_dir}/version.txt")).unwrap()).unwrap()
 }
 
 fn check_dokan_env(version_major: &str) -> bool {
@@ -59,21 +45,20 @@ fn check_dokan_env(version_major: &str) -> bool {
 		"x86_64" => "x64",
 		_ => panic!("Unsupported target architecture!"),
 	};
-	let env_name = format!("DokanLibrary{}_LibraryPath_{}", version_major, arch);
-	println!("cargo:rerun-if-env-changed={}", env_name);
+	let env_name = format!("DokanLibrary{version_major}_LibraryPath_{arch}");
+	println!("cargo:rerun-if-env-changed={env_name}");
 	if let Ok(lib_path) = env::var(&env_name) {
-		println!("cargo:rustc-link-search=native={}", lib_path);
+		println!("cargo:rustc-link-search=native={lib_path}");
 		true
 	} else {
 		println!(
-			"cargo:warning=Environment variable {} not found, building Dokan from source.",
-			env_name
+			"cargo:warning=Environment variable {env_name} not found, building Dokan from source."
 		);
 		false
 	}
 }
 
-fn build_dokan(compiler: &Tool, version_major: &str, output_path: Option<String>) {
+fn build_dokan(compiler: &Tool, version_major: &str, output_path: Option<&str>) {
 	let out_dir = env::var("OUT_DIR").unwrap();
 	let src = fs::read_dir("src/dokany/dokan")
 		.unwrap()
@@ -85,8 +70,8 @@ fn build_dokan(compiler: &Tool, version_major: &str, output_path: Option<String>
 				false
 			}
 		});
-	let dll_name = format!("dokan{}.dll", version_major);
-	let dll_path = format!("{}/{}", out_dir, dll_name);
+	let dll_name = format!("dokan{version_major}.dll");
+	let dll_path = format!("{out_dir}/{dll_name}");
 	let mut compiler_cmd = compiler.to_command();
 	compiler_cmd
 		.stdout(Stdio::inherit())
@@ -100,41 +85,40 @@ fn build_dokan(compiler: &Tool, version_major: &str, output_path: Option<String>
 		.arg("-Isrc/dokany/sys");
 	if compiler.is_like_msvc() {
 		compiler_cmd
-			.arg(format!("/Fo{}/", out_dir))
+			.arg(format!("/Fo{out_dir}/"))
 			.args(src)
 			.arg("/link")
 			.arg("/DLL")
 			.arg("/DEF:src/dokany/dokan/dokan.def")
-			.arg(format!("/OUT:{}", dll_path))
-			.arg(format!("/IMPLIB:{}/dokan{}.lib", out_dir, version_major))
+			.arg(format!("/OUT:{dll_path}"))
+			.arg(format!("/IMPLIB:{out_dir}/dokan{version_major}.lib"))
 			.arg("advapi32.lib")
 			.arg("shell32.lib")
 			.arg("user32.lib")
 	} else {
 		compiler_cmd
 			.arg("-shared")
-			.arg(format!("-o{}", dll_path))
+			.arg(format!("-o{dll_path}"))
 			.args(src)
 			.arg(format!(
-				"-Wl,--out-implib,{}/dokan{}.lib",
-				out_dir, version_major
+				"-Wl,--out-implib,{out_dir}/dokan{version_major}.lib"
 			))
 	};
 	assert!(compiler_cmd.output().unwrap().status.success());
-	if let Some(output_path) = &output_path {
-		fs::copy(dll_path, format!("{}/{}", output_path, dll_name)).unwrap();
+	if let Some(output_path) = output_path {
+		fs::create_dir_all(output_path).unwrap();
+		fs::copy(dll_path, format!("{output_path}/{dll_name}")).unwrap();
 	}
 	println!("cargo:rerun-if-env-changed=DOKAN_DLL_OUTPUT_PATH");
-	println!("cargo:rustc-link-search=native={}", out_dir);
+	println!("cargo:rustc-link-search=native={out_dir}");
 	println!("cargo:rerun-if-changed=src/dokany");
 }
 
 fn main() {
 	let compiler = Build::new().get_compiler();
-	print_env(&compiler);
 	let version = run_generator(&compiler);
 	assert_eq!(
-		format!("dokan{}", version),
+		format!("dokan{version}"),
 		env::var("CARGO_PKG_VERSION")
 			.unwrap()
 			.split('+')
@@ -143,9 +127,9 @@ fn main() {
 		"Mismatch detected between crate version and bundled Dokan source version.",
 	);
 	let version_major = &version[..1];
-	println!("cargo:rustc-link-lib=dylib=dokan{}", version_major);
+	println!("cargo:rustc-link-lib=dylib=dokan{version_major}");
 	let output_path = env::var("DOKAN_DLL_OUTPUT_PATH").ok();
 	if !check_dokan_env(version_major) || output_path.is_some() {
-		build_dokan(&compiler, version_major, output_path);
-	};
+		build_dokan(&compiler, version_major, output_path.as_deref());
+	}
 }

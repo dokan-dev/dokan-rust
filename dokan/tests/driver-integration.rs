@@ -1,6 +1,4 @@
-extern crate lazy_static;
-extern crate parking_lot;
-extern crate regex;
+//! End-to-end tests that exercise callbacks through the installed Dokany driver.
 
 use std::{
 	cell::RefCell,
@@ -8,7 +6,7 @@ use std::{
 	mem,
 	os::windows::prelude::{AsRawHandle, FromRawHandle, OwnedHandle},
 	pin::Pin,
-	process, ptr,
+	process, ptr, slice,
 	sync::mpsc::{self, Receiver, SyncSender},
 	thread,
 	time::{Duration, UNIX_EPOCH},
@@ -23,8 +21,7 @@ use widestring::{U16CStr, U16CString};
 use winapi::{
 	shared::{
 		minwindef::{BOOL, FALSE, HLOCAL, LPCVOID, LPVOID, MAX_PATH, TRUE},
-		ntdef::{HANDLE, NTSTATUS, NULL},
-		ntstatus::{STATUS_ACCESS_DENIED, STATUS_NOT_IMPLEMENTED, STATUS_SUCCESS},
+		ntdef::{HANDLE, NULL},
 		sddl::ConvertSidToStringSidW,
 		winerror::{
 			ERROR_HANDLE_EOF, ERROR_INSUFFICIENT_BUFFER, ERROR_INTERNAL_ERROR, ERROR_IO_PENDING,
@@ -37,7 +34,7 @@ use winapi::{
 		handleapi::{CloseHandle, INVALID_HANDLE_VALUE},
 		ioapiset::GetOverlappedResult,
 		minwinbase::OVERLAPPED,
-		processthreadsapi::{GetCurrentProcess, OpenProcessToken},
+		processthreadsapi::{GetCurrentProcess, OpenProcessToken, ProcessIdToSessionId},
 		securitybaseapi::*,
 		synchapi::CreateEventW,
 		winbase::*,
@@ -45,22 +42,76 @@ use winapi::{
 	},
 };
 
-use crate::{
-	data::{
-		CreateFileInfo, DiskSpaceInfo, FileInfo, FileTimeOperation, FillDataResult, FindData,
-		FindStreamData, OperationInfo, VolumeInfo,
-	},
-	file_system_handler::OperationResult,
-	init, notify_create, notify_delete, notify_rename, notify_update, notify_xattr_update,
-	operations_helpers::NtResult,
-	shutdown,
-	to_file_time::ToFileTime,
-	unmount, FileSystemHandle, FileSystemHandler, FileSystemMounter, MountFlags, MountOptions,
-	IO_SECURITY_CONTEXT,
+use dokan::status::{STATUS_ACCESS_DENIED, STATUS_NOT_IMPLEMENTED};
+use dokan::{
+	CreateFileInfo, DeviceType, DirectoryFiller, DiskSpaceInfo, FileInfo, FileSystemHandle,
+	FileSystemHandler, FileSystemMountError, FileSystemMounter, FileTimeOperation, FindData,
+	FindStreamData, MountFlags, MountOptions, OperationInfo, OperationResult, SecurityInformation,
+	StreamFiller, VolumeInfo, init, list_mount_points, notify_create, notify_delete, notify_rename,
+	notify_update, notify_xattr_update, shutdown, unmount,
 };
 
-pub fn convert_str(s: impl AsRef<str>) -> U16CString {
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct AlignedBuffer {
+	words: Vec<usize>,
+	len: usize,
+}
+
+impl AlignedBuffer {
+	fn zeroed(len: usize) -> Self {
+		Self {
+			words: vec![0; len.div_ceil(mem::size_of::<usize>())],
+			len,
+		}
+	}
+
+	fn len(&self) -> usize {
+		self.len
+	}
+
+	fn as_ptr<T>(&self) -> *const T {
+		debug_assert!(mem::align_of::<T>() <= mem::align_of::<usize>());
+		self.words.as_ptr().cast()
+	}
+
+	fn as_mut_ptr<T>(&mut self) -> *mut T {
+		debug_assert!(mem::align_of::<T>() <= mem::align_of::<usize>());
+		self.words.as_mut_ptr().cast()
+	}
+
+	fn as_bytes(&self) -> &[u8] {
+		unsafe { slice::from_raw_parts(self.as_ptr(), self.len) }
+	}
+}
+
+trait TestFileTimeExt {
+	fn to_filetime(&self) -> winapi::shared::minwindef::FILETIME;
+}
+
+impl TestFileTimeExt for std::time::SystemTime {
+	fn to_filetime(&self) -> winapi::shared::minwindef::FILETIME {
+		const WINDOWS_EPOCH_OFFSET: Duration = Duration::from_secs(11_644_473_600);
+		let intervals =
+			self.duration_since(UNIX_EPOCH - WINDOWS_EPOCH_OFFSET)
+				.unwrap_or_default()
+				.as_nanos() / 100;
+		let intervals = u64::try_from(intervals).unwrap_or(u64::MAX);
+		let bytes = intervals.to_le_bytes();
+		winapi::shared::minwindef::FILETIME {
+			dwLowDateTime: u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+			dwHighDateTime: u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
+		}
+	}
+}
+
+type NtResult = OperationResult<()>;
+
+fn convert_str(s: impl AsRef<str>) -> U16CString {
 	unsafe { U16CString::from_str_unchecked(s) }
+}
+
+fn len_u32(len: usize) -> u32 {
+	u32::try_from(len).expect("test buffer length must fit in a Windows DWORD")
 }
 
 macro_rules! assert_eq_win32 {
@@ -101,7 +152,7 @@ last error: {:#x}",
 	};
 }
 
-pub struct TestContext {
+struct TestContext {
 	tx: SyncSender<HandlerSignal>,
 }
 
@@ -112,32 +163,36 @@ impl Drop for TestContext {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct OperationInfoDump {
-	pub pid: u32,
-	pub is_dir: bool,
-	pub delete_pending: bool,
-	pub paging_io: bool,
-	pub synchronous_io: bool,
-	pub no_cache: bool,
-	pub write_to_eof: bool,
-	pub single_thread: bool,
-	pub mount_flags: MountFlags,
-	pub mount_point: Option<U16CString>,
-	pub unc_name: Option<U16CString>,
-	pub timeout: Duration,
-	pub allocation_unit_size: u32,
-	pub sector_size: u32,
+#[allow(
+	clippy::struct_excessive_bools,
+	reason = "the test snapshots independent Dokany operation flags"
+)]
+struct OperationInfoDump {
+	pid: u32,
+	is_dir: bool,
+	delete_pending: bool,
+	paging_io: bool,
+	synchronous_io: bool,
+	no_cache: bool,
+	write_to_eof: bool,
+	single_thread: bool,
+	mount_flags: MountFlags,
+	mount_point: Option<U16CString>,
+	unc_name: Option<U16CString>,
+	timeout: Duration,
+	allocation_unit_size: u32,
+	sector_size: u32,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum HandlerSignal {
+enum HandlerSignal {
 	Mounted,
 	Unmounted,
 	CreateFile(u32, u32, u32, u32, u32),
 	Cleanup,
 	CloseFile,
 	ContextDropped,
-	ReadFile(i64, usize),
+	ReadFile(u64, usize),
 	WriteFile(i64, Vec<u8>),
 	FlushFileBuffers,
 	FindFilesWithPattern(U16CString),
@@ -152,17 +207,18 @@ pub enum HandlerSignal {
 	UnlockFile(i64, i64),
 	GetFileSecurity(u32, u32),
 	SetFileSecurity(u32, u32, U16CString, i32),
-	OpenRequesterToken(Pin<Vec<u8>>),
+	OpenRequesterToken(AlignedBuffer),
 	OperationInfo(OperationInfoDump),
 }
 
 #[derive(Debug)]
-pub struct TestHandler {
+struct TestHandler {
 	tx: SyncSender<HandlerSignal>,
 }
 
 impl TestHandler {
-	pub fn new(tx: SyncSender<HandlerSignal>) -> Self {
+	#[must_use]
+	fn new(tx: SyncSender<HandlerSignal>) -> Self {
 		Self { tx }
 	}
 }
@@ -179,44 +235,49 @@ fn get_descriptor_owner(desc: PSECURITY_DESCRIPTOR) -> (U16CString, BOOL) {
 	unsafe {
 		let mut psid = ptr::null_mut();
 		let mut owner_defaulted = 0;
-		GetSecurityDescriptorOwner(desc, &mut psid, &mut owner_defaulted);
+		GetSecurityDescriptorOwner(desc, &raw mut psid, &raw mut owner_defaulted);
 		let mut ps = ptr::null_mut();
-		assert_eq_win32!(ConvertSidToStringSidW(psid, &mut ps), TRUE);
+		assert_eq_win32!(ConvertSidToStringSidW(psid, &raw mut ps), TRUE);
 		let sid = U16CStr::from_ptr_str(ps).to_owned();
 		assert_eq_win32!(LocalFree(ps as HLOCAL), NULL);
 		(sid, owner_defaulted)
 	}
 }
 
-fn get_user_info(token: HANDLE) -> Pin<Vec<u8>> {
+fn get_user_info(token: HANDLE) -> AlignedBuffer {
 	unsafe {
 		let mut user_info_len = 0;
 		assert_eq_win32!(
-			GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut user_info_len),
+			GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &raw mut user_info_len),
 			FALSE
 		);
 		assert_eq!(GetLastError(), ERROR_INSUFFICIENT_BUFFER);
-		let mut user_info_buffer = Pin::new(vec![0; user_info_len as usize]);
+		let mut user_info_buffer = AlignedBuffer::zeroed(
+			usize::try_from(user_info_len).expect("a token-information length fits in usize"),
+		);
 		assert_eq_win32!(
 			GetTokenInformation(
 				token,
 				TokenUser,
-				user_info_buffer.as_mut_ptr() as LPVOID,
+				user_info_buffer.as_mut_ptr(),
 				user_info_len,
-				&mut user_info_len,
+				&raw mut user_info_len,
 			),
 			TRUE
 		);
-		assert_eq!(user_info_len as usize, user_info_buffer.len());
+		assert_eq!(
+			usize::try_from(user_info_len).expect("a token-information length fits in usize"),
+			user_info_buffer.len()
+		);
 		user_info_buffer
 	}
 }
 
-fn get_current_user_info() -> Pin<Vec<u8>> {
+fn get_current_user_info() -> AlignedBuffer {
 	unsafe {
 		let mut token = ptr::null_mut();
 		assert_eq_win32!(
-			OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token),
+			OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token),
 			TRUE
 		);
 		let info = get_user_info(token);
@@ -225,12 +286,12 @@ fn get_current_user_info() -> Pin<Vec<u8>> {
 	}
 }
 
-fn create_test_descriptor() -> Vec<u8> {
+fn create_test_descriptor() -> AlignedBuffer {
 	unsafe {
 		let mut user_info_buffer = get_current_user_info();
-		let user_info = &*(user_info_buffer.as_mut_ptr() as PTOKEN_USER);
+		let user_info = &*user_info_buffer.as_mut_ptr::<TOKEN_USER>();
 		let mut abs_desc = mem::zeroed::<SECURITY_DESCRIPTOR>();
-		let abs_desc_ptr = &mut abs_desc as *mut _ as PSECURITY_DESCRIPTOR;
+		let abs_desc_ptr = &raw mut abs_desc as PSECURITY_DESCRIPTOR;
 		assert_eq_win32!(
 			InitializeSecurityDescriptor(abs_desc_ptr, SECURITY_DESCRIPTOR_REVISION),
 			TRUE
@@ -241,38 +302,47 @@ fn create_test_descriptor() -> Vec<u8> {
 		);
 		let mut rel_desc_len = 0;
 		assert_eq_win32!(
-			MakeSelfRelativeSD(abs_desc_ptr, ptr::null_mut(), &mut rel_desc_len),
+			MakeSelfRelativeSD(abs_desc_ptr, ptr::null_mut(), &raw mut rel_desc_len),
 			FALSE
 		);
 		assert_eq!(GetLastError(), ERROR_INSUFFICIENT_BUFFER);
-		let mut rel_desc_buffer = vec![0; rel_desc_len as usize];
+		let mut rel_desc_buffer = AlignedBuffer::zeroed(
+			usize::try_from(rel_desc_len).expect("a security-descriptor length fits in usize"),
+		);
 		assert_eq_win32!(
 			MakeSelfRelativeSD(
 				abs_desc_ptr,
-				rel_desc_buffer.as_mut_ptr() as PSECURITY_DESCRIPTOR,
-				&mut rel_desc_len,
+				rel_desc_buffer.as_mut_ptr(),
+				&raw mut rel_desc_len,
 			),
 			TRUE
 		);
-		assert_eq!(rel_desc_len as usize, rel_desc_buffer.len());
+		assert_eq!(
+			usize::try_from(rel_desc_len).expect("a security-descriptor length fits in usize"),
+			rel_desc_buffer.len()
+		);
 		rel_desc_buffer
 	}
 }
 
-impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
+impl FileSystemHandler for TestHandler {
 	type Context = Option<TestContext>;
 
+	#[allow(
+		clippy::too_many_lines,
+		reason = "the integration handler routes all create-path scenarios in one callback"
+	)]
 	fn create_file(
-		&'b self,
-		file_name: &U16CStr,
-		_security_context: &IO_SECURITY_CONTEXT,
-		desired_access: u32,
-		file_attributes: u32,
-		share_access: u32,
-		create_disposition: u32,
-		create_options: u32,
-		info: &mut OperationInfo<'a, 'b, Self>,
-	) -> Result<CreateFileInfo<Self::Context>, NTSTATUS> {
+		&self,
+		request: &dokan::CreateFileRequest<'_, Self>,
+	) -> OperationResult<CreateFileInfo<Self::Context>> {
+		let file_name = request.path;
+		let desired_access = request.desired_access.bits();
+		let file_attributes = request.file_attributes.bits();
+		let share_access = request.share_access.bits();
+		let create_disposition = request.disposition as u32;
+		let create_options = request.options.bits();
+		let info = request.operation;
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
 			"\\test_file_io"
@@ -335,8 +405,8 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 						write_to_eof: info.write_to_eof(),
 						single_thread: info.single_thread(),
 						mount_flags: info.mount_flags(),
-						mount_point: info.mount_point().map(|s| s.to_owned()),
-						unc_name: info.unc_name().map(|s| s.to_owned()),
+						mount_point: info.mount_point().map(std::borrow::ToOwned::to_owned),
+						unc_name: info.unc_name().map(std::borrow::ToOwned::to_owned),
 						timeout: info.timeout(),
 						allocation_unit_size: info.allocation_unit_size(),
 						sector_size: info.sector_size(),
@@ -377,10 +447,10 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn cleanup(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		_info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		_info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) {
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_close_file" {
@@ -389,10 +459,10 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn close_file(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		_info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		_info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) {
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_close_file" {
@@ -401,12 +471,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn read_file(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		offset: i64,
+		offset: u64,
 		buffer: &mut [u8],
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<u32> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -417,19 +487,19 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 			self.tx
 				.send(HandlerSignal::ReadFile(offset, buffer.len()))
 				.unwrap();
-			Ok(data.len() as u32)
+			Ok(len_u32(data.len()))
 		} else {
 			Err(STATUS_ACCESS_DENIED)
 		}
 	}
 
 	fn write_file(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		offset: i64,
 		buffer: &[u8],
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<u32> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -437,17 +507,17 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 			self.tx
 				.send(HandlerSignal::WriteFile(offset, Vec::from(buffer)))
 				.unwrap();
-			Ok(buffer.len() as u32)
+			Ok(len_u32(buffer.len()))
 		} else {
 			Err(STATUS_ACCESS_DENIED)
 		}
 	}
 
 	fn flush_file_buffers(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -460,18 +530,18 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn get_file_information(
-		&'b self,
+		&self,
 		_file_name: &U16CStr,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<FileInfo> {
 		check_pid(info.pid())?;
 		Ok(FileInfo {
-			attributes: if info.is_dir() {
+			attributes: dokan::FileAttributes::from_bits_retain(if info.is_dir() {
 				FILE_ATTRIBUTE_DIRECTORY
 			} else {
 				FILE_ATTRIBUTE_NORMAL
-			},
+			}),
 			creation_time: UNIX_EPOCH,
 			last_access_time: UNIX_EPOCH + Duration::from_secs(1),
 			last_write_time: UNIX_EPOCH + Duration::from_secs(2),
@@ -482,71 +552,74 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn find_files(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		mut fill_find_data: impl FnMut(&FindData) -> FillDataResult,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		filler: &mut DirectoryFiller<'_>,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
-			"\\test_find_files" => fill_find_data(&FindData {
-				attributes: FILE_ATTRIBUTE_NORMAL,
-				creation_time: UNIX_EPOCH,
-				last_access_time: UNIX_EPOCH + Duration::from_secs(1),
-				last_write_time: UNIX_EPOCH + Duration::from_secs(2),
-				file_size: (1 << 32) + 2,
-				file_name: convert_str("test_inner_file"),
-			})
-			.map_err(Into::into),
+			"\\test_find_files" => filler
+				.push(&FindData {
+					attributes: dokan::FileAttributes::NORMAL,
+					creation_time: UNIX_EPOCH,
+					last_access_time: UNIX_EPOCH + Duration::from_secs(1),
+					last_write_time: UNIX_EPOCH + Duration::from_secs(2),
+					file_size: (1 << 32) + 2,
+					file_name: "test_inner_file".into(),
+				})
+				.map(|_| ())
+				.map_err(Into::into),
 			_ => Err(STATUS_ACCESS_DENIED),
 		}
 	}
 
 	fn find_files_with_pattern(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		pattern: &U16CStr,
-		mut fill_find_data: impl FnMut(&FindData) -> FillDataResult,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		filler: &mut DirectoryFiller<'_>,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
 			"\\test_find_files" => Err(STATUS_NOT_IMPLEMENTED),
-			"\\test_find_files_with_pattern" => fill_find_data(&FindData {
-				attributes: FILE_ATTRIBUTE_NORMAL,
-				creation_time: UNIX_EPOCH,
-				last_access_time: UNIX_EPOCH + Duration::from_secs(1),
-				last_write_time: UNIX_EPOCH + Duration::from_secs(2),
-				file_size: (1 << 32) + 2,
-				file_name: convert_str("test_inner_file_with_pattern"),
-			})
-			.map(|_| {
-				self.tx
-					.send(HandlerSignal::FindFilesWithPattern(pattern.to_owned()))
-					.unwrap();
-			})
-			.map_err(Into::into),
+			"\\test_find_files_with_pattern" => filler
+				.push(&FindData {
+					attributes: dokan::FileAttributes::NORMAL,
+					creation_time: UNIX_EPOCH,
+					last_access_time: UNIX_EPOCH + Duration::from_secs(1),
+					last_write_time: UNIX_EPOCH + Duration::from_secs(2),
+					file_size: (1 << 32) + 2,
+					file_name: "test_inner_file_with_pattern".into(),
+				})
+				.map(|_| {
+					self.tx
+						.send(HandlerSignal::FindFilesWithPattern(pattern.to_owned()))
+						.unwrap();
+				})
+				.map_err(Into::into),
 			_ => Err(STATUS_ACCESS_DENIED),
 		}
 	}
 
 	fn set_file_attributes(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		file_attributes: u32,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		file_attributes: dokan::FileAttributes,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
 			"\\test_set_file_attributes" => {
 				self.tx
-					.send(HandlerSignal::SetFileAttributes(file_attributes))
+					.send(HandlerSignal::SetFileAttributes(file_attributes.bits()))
 					.unwrap();
 				Ok(())
 			}
@@ -556,13 +629,13 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn set_file_time(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		creation_time: FileTimeOperation,
 		last_access_time: FileTimeOperation,
 		last_write_time: FileTimeOperation,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -583,10 +656,10 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn delete_file(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -601,10 +674,10 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn delete_directory(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -619,12 +692,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn move_file(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		new_file_name: &U16CStr,
 		replace_if_existing: bool,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -642,11 +715,11 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn set_end_of_file(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		offset: i64,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -661,11 +734,11 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn set_allocation_size(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		alloc_size: i64,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -680,12 +753,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn lock_file(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		offset: i64,
 		length: i64,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -700,12 +773,12 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn unlock_file(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
 		offset: i64,
 		length: i64,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
@@ -720,8 +793,8 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn get_disk_free_space(
-		&'b self,
-		_info: &OperationInfo<'a, 'b, Self>,
+		&self,
+		_info: &OperationInfo<'_, Self>,
 	) -> OperationResult<DiskSpaceInfo> {
 		Ok(DiskSpaceInfo {
 			byte_count: 2 * 1024 * 1024,
@@ -731,86 +804,82 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn get_volume_information(
-		&'b self,
-		_info: &OperationInfo<'a, 'b, Self>,
-	) -> OperationResult<VolumeInfo> {
+		&self,
+		_info: &OperationInfo<'_, Self>,
+	) -> OperationResult<VolumeInfo<'_>> {
 		Ok(VolumeInfo {
-			name: convert_str("Test Drive"),
+			name: "Test Drive".into(),
 			serial_number: 1,
 			max_component_length: 255,
-			fs_flags: FILE_CASE_PRESERVED_NAMES
-				| FILE_CASE_SENSITIVE_SEARCH
-				| FILE_UNICODE_ON_DISK
-				| FILE_NAMED_STREAMS,
-			fs_name: convert_str("TESTFS"),
+			features: dokan::VolumeFeatures::CASE_PRESERVED_NAMES
+				| dokan::VolumeFeatures::CASE_SENSITIVE_SEARCH
+				| dokan::VolumeFeatures::UNICODE_ON_DISK
+				| dokan::VolumeFeatures::NAMED_STREAMS,
+			fs_name: "TESTFS".into(),
 		})
 	}
 
 	fn mounted(
-		&'b self,
+		&self,
 		_mount_point: &U16CStr,
-		_info: &OperationInfo<'a, 'b, Self>,
+		_info: &OperationInfo<'_, Self>,
 	) -> OperationResult<()> {
 		self.tx.send(HandlerSignal::Mounted).unwrap();
 		Ok(())
 	}
 
-	fn unmounted(&'b self, _info: &OperationInfo<'a, 'b, Self>) -> OperationResult<()> {
+	fn unmounted(&self, _info: &OperationInfo<'_, Self>) -> OperationResult<()> {
 		self.tx.send(HandlerSignal::Unmounted).unwrap();
 		Ok(())
 	}
 
 	fn get_file_security(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		security_information: SECURITY_INFORMATION,
-		security_descriptor: PSECURITY_DESCRIPTOR,
-		buffer_length: u32,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
-	) -> OperationResult<u32> {
+		security_information: SecurityInformation,
+		security_descriptor: &mut [u8],
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
+	) -> OperationResult<usize> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		match file_name.as_ref() {
 			"\\test_get_file_security" => {
 				self.tx
 					.send(HandlerSignal::GetFileSecurity(
-						security_information,
-						buffer_length,
+						security_information.bits(),
+						len_u32(security_descriptor.len()),
 					))
 					.unwrap();
 				let desc = create_test_descriptor();
-				let result = Ok(desc.len() as u32);
-				if desc.len() <= buffer_length as usize {
-					unsafe {
-						desc.as_ptr()
-							.copy_to_nonoverlapping(security_descriptor as *mut _, desc.len());
-					}
+				let result = Ok(desc.len());
+				if desc.len() <= security_descriptor.len() {
+					security_descriptor[..desc.len()].copy_from_slice(desc.as_bytes());
 				}
 				result
 			}
-			"\\test_get_file_security_overflow" => Ok(buffer_length + 1),
+			"\\test_get_file_security_overflow" => Ok(security_descriptor.len() + 1),
 			_ => Err(STATUS_ACCESS_DENIED),
 		}
 	}
 
 	fn set_file_security(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		security_information: SECURITY_INFORMATION,
-		security_descriptor: PSECURITY_DESCRIPTOR,
-		buffer_length: u32,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		security_information: SecurityInformation,
+		security_descriptor: &[u8],
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_set_file_security" {
-			let (sid, owner_defaulted) = get_descriptor_owner(security_descriptor);
+			let (sid, owner_defaulted) =
+				get_descriptor_owner(security_descriptor.as_ptr() as PSECURITY_DESCRIPTOR);
 			self.tx
 				.send(HandlerSignal::SetFileSecurity(
-					buffer_length,
-					security_information,
+					len_u32(security_descriptor.len()),
+					security_information.bits(),
 					sid,
 					owner_defaulted,
 				))
@@ -822,31 +891,31 @@ impl<'a, 'b: 'a> FileSystemHandler<'a, 'b> for TestHandler {
 	}
 
 	fn find_streams(
-		&'b self,
+		&self,
 		file_name: &U16CStr,
-		mut fill_find_stream_data: impl FnMut(&FindStreamData) -> FillDataResult,
-		info: &OperationInfo<'a, 'b, Self>,
-		_context: &'a Self::Context,
+		filler: &mut StreamFiller<'_>,
+		info: &OperationInfo<'_, Self>,
+		_context: &Self::Context,
 	) -> OperationResult<()> {
 		check_pid(info.pid())?;
 		let file_name = file_name.to_string_lossy();
 		if &file_name == "\\test_find_streams" {
-			fill_find_stream_data(&FindStreamData {
-				size: 42,
-				name: convert_str("::$DATA"),
-			})
-			.map_err(Into::into)
+			filler
+				.push(&FindStreamData {
+					size: 42,
+					name: "::$DATA".into(),
+				})
+				.map(|_| ())
+				.map_err(Into::into)
 		} else {
 			Err(STATUS_ACCESS_DENIED)
 		}
 	}
 }
 
-lazy_static::lazy_static! {
-	static ref TEST_DRIVE_LOCK: Mutex<()> = Mutex::new(());
-}
+static TEST_DRIVE_LOCK: Mutex<()> = Mutex::new(());
 
-pub struct TestDriveContext<'a> {
+struct TestDriveContext<'a> {
 	rx_instance: &'a Receiver<FileSystemHandle>,
 	rx_signal: &'a Receiver<HandlerSignal>,
 
@@ -854,20 +923,21 @@ pub struct TestDriveContext<'a> {
 }
 
 impl TestDriveContext<'_> {
-	pub fn signal(&self) -> HandlerSignal {
+	fn signal(&self) -> HandlerSignal {
 		self.rx_signal.recv().unwrap()
 	}
 
-	pub fn instance(&self) -> FileSystemHandle {
-		*self
-			.instance
+	fn instance(&self) -> FileSystemHandle {
+		self.instance
 			.borrow_mut()
 			.get_or_insert_with(|| self.rx_instance.recv().unwrap())
+			.clone()
 	}
 }
 
 // Errors might happen on CICD only. To facilitate debugging, output debug messages on console.
-pub fn test_flags() -> MountFlags {
+#[must_use]
+fn test_flags() -> MountFlags {
 	let mut flags =
 		MountFlags::CURRENT_SESSION | MountFlags::FILELOCK_USER_MODE | MountFlags::ALT_STREAM;
 
@@ -880,14 +950,13 @@ pub fn test_flags() -> MountFlags {
 	flags
 }
 
-#[allow(unused_must_use)]
-pub fn with_test_drive<Scope: FnOnce(TestDriveContext)>(scope: Scope) {
+fn with_test_drive<Scope: FnOnce(TestDriveContext)>(scope: Scope) {
 	let _guard = TEST_DRIVE_LOCK.lock();
 
 	init();
 
 	// In case previous tests failed and didn't unmount the drive.
-	unmount(convert_str("Z:\\"));
+	let _ = unmount(convert_str("Z:\\"));
 
 	let (tx_instance, rx_instance) = mpsc::sync_channel(1);
 
@@ -904,7 +973,7 @@ pub fn with_test_drive<Scope: FnOnce(TestDriveContext)>(scope: Scope) {
 			sector_size: 1024,
 			..Default::default()
 		};
-		let mut file_system = FileSystemMounter::new(&handler, &mount_point, &options);
+		let file_system = FileSystemMounter::new(handler, &mount_point, options);
 		let mount_handle = file_system.mount().unwrap();
 		tx_instance.send(mount_handle.instance()).unwrap();
 		drop(mount_handle);
@@ -960,12 +1029,12 @@ fn can_retrieve_volume_information() {
 			GetVolumeInformationW(
 				path.as_ptr(),
 				volume_name.as_mut_ptr(),
-				volume_name.len() as u32,
-				&mut serial_number,
-				&mut max_component_length,
-				&mut fs_flags,
+				len_u32(volume_name.len()),
+				&raw mut serial_number,
+				&raw mut max_component_length,
+				&raw mut fs_flags,
 				fs_name.as_mut_ptr(),
-				fs_name.len() as u32,
+				len_u32(fs_name.len()),
 			),
 			0
 		);
@@ -999,9 +1068,9 @@ fn can_retrieve_disk_space() {
 		assert_eq_win32!(
 			GetDiskFreeSpaceExW(
 				path.as_ptr(),
-				&mut free_bytes_available as *mut _ as PULARGE_INTEGER,
-				&mut total_number_of_bytes as *mut _ as PULARGE_INTEGER,
-				&mut total_number_of_free_bytes as *mut _ as PULARGE_INTEGER,
+				&raw mut free_bytes_available as PULARGE_INTEGER,
+				&raw mut total_number_of_bytes as PULARGE_INTEGER,
+				&raw mut total_number_of_free_bytes as PULARGE_INTEGER,
 			),
 			TRUE
 		);
@@ -1067,8 +1136,8 @@ fn can_read_from_and_write_to_file() {
 			ReadFile(
 				hf,
 				buf.as_mut_ptr() as LPVOID,
-				buf.len() as u32,
-				&mut len,
+				len_u32(buf.len()),
+				&raw mut len,
 				ptr::null_mut()
 			),
 			TRUE
@@ -1084,7 +1153,7 @@ fn can_read_from_and_write_to_file() {
 				hf,
 				buf.as_ptr() as LPCVOID,
 				len,
-				&mut bytes_written,
+				&raw mut bytes_written,
 				ptr::null_mut()
 			),
 			TRUE
@@ -1092,7 +1161,7 @@ fn can_read_from_and_write_to_file() {
 		assert_eq!(bytes_written, len);
 		assert_eq!(
 			context.signal(),
-			HandlerSignal::WriteFile(len as i64, Vec::from(&buf[0..len as usize]))
+			HandlerSignal::WriteFile(i64::from(len), Vec::from(&buf[0..len as usize]))
 		);
 		assert_eq_win32!(FlushFileBuffers(hf), TRUE);
 		assert_eq!(context.signal(), HandlerSignal::FlushFileBuffers);
@@ -1105,7 +1174,7 @@ fn can_get_file_information() {
 	with_test_drive(|_context| unsafe {
 		let hf = open_file("Z:\\test_get_file_information");
 		let mut info = mem::zeroed();
-		assert_eq_win32!(GetFileInformationByHandle(hf, &mut info), TRUE);
+		assert_eq_win32!(GetFileInformationByHandle(hf, &raw mut info), TRUE);
 		assert_eq_win32!(CloseHandle(hf), TRUE);
 
 		let ft_epoch = UNIX_EPOCH.to_filetime();
@@ -1138,19 +1207,19 @@ fn check_dir_content(pattern: &str, file_name: &str) {
 	unsafe {
 		let pattern = convert_str(pattern);
 		let mut data = mem::zeroed();
-		let hf = FindFirstFileW(pattern.as_ptr(), &mut data);
+		let hf = FindFirstFileW(pattern.as_ptr(), &raw mut data);
 		let ft_epoch = UNIX_EPOCH.to_filetime();
 		assert_ne_win32!(hf, INVALID_HANDLE_VALUE);
 		assert_eq!(
 			U16CStr::from_slice_truncate(&data.cFileName).unwrap(),
 			convert_str(".")
 		);
-		assert_eq_win32!(FindNextFileW(hf, &mut data), TRUE);
+		assert_eq_win32!(FindNextFileW(hf, &raw mut data), TRUE);
 		assert_eq!(
 			U16CStr::from_slice_truncate(&data.cFileName).unwrap(),
 			convert_str("..")
 		);
-		assert_eq_win32!(FindNextFileW(hf, &mut data), TRUE);
+		assert_eq_win32!(FindNextFileW(hf, &raw mut data), TRUE);
 		assert_eq!(data.dwFileAttributes, FILE_ATTRIBUTE_NORMAL);
 		assert_eq!(data.ftCreationTime.dwLowDateTime, ft_epoch.dwLowDateTime);
 		assert_eq!(data.ftCreationTime.dwHighDateTime, ft_epoch.dwHighDateTime);
@@ -1179,7 +1248,7 @@ fn check_dir_content(pattern: &str, file_name: &str) {
 			U16CStr::from_slice_truncate(&data.cAlternateFileName).unwrap(),
 			convert_str("")
 		);
-		assert_eq_win32!(FindNextFileW(hf, &mut data), FALSE);
+		assert_eq_win32!(FindNextFileW(hf, &raw mut data), FALSE);
 		assert_eq!(GetLastError(), ERROR_NO_MORE_FILES);
 		assert_eq_win32!(FindClose(hf), TRUE);
 	}
@@ -1239,15 +1308,15 @@ fn can_set_file_time() {
 				FileTimeOperation::SetTime(mtime),
 			)
 		);
-		let time_dont_change = mem::transmute(0i64);
-		let time_disable_update = mem::transmute(-1i64);
-		let time_resume_update = mem::transmute(-2i64);
+		let time_dont_change = mem::transmute::<i64, winapi::shared::minwindef::FILETIME>(0);
+		let time_disable_update = mem::transmute::<i64, winapi::shared::minwindef::FILETIME>(-1);
+		let time_resume_update = mem::transmute::<i64, winapi::shared::minwindef::FILETIME>(-2);
 		assert_eq_win32!(
 			SetFileTime(
 				hf,
-				&time_dont_change,
-				&time_disable_update,
-				&time_resume_update
+				&raw const time_dont_change,
+				&raw const time_disable_update,
+				&raw const time_resume_update
 			),
 			TRUE
 		);
@@ -1313,12 +1382,15 @@ fn can_set_allocation_size() {
 		let hf = open_file("Z:\\test_set_allocation_size");
 		let dist_low = 42;
 		let mut dist_high = 42;
-		assert_eq_win32!(SetFilePointer(hf, dist_low, &mut dist_high, FILE_BEGIN), 42);
+		assert_eq_win32!(
+			SetFilePointer(hf, dist_low, &raw mut dist_high, FILE_BEGIN),
+			42
+		);
 		assert_eq!(dist_high, 42);
 		assert_eq_win32!(SetEndOfFile(hf), TRUE);
 		assert_eq!(
 			context.signal(),
-			HandlerSignal::SetAllocationSize(dist_low as i64 + ((dist_high as i64) << 32))
+			HandlerSignal::SetAllocationSize(i64::from(dist_low) + (i64::from(dist_high) << 32))
 		);
 		assert_eq_win32!(CloseHandle(hf), TRUE);
 	});
@@ -1348,7 +1420,7 @@ fn can_get_file_security() {
 				OWNER_SECURITY_INFORMATION,
 				ptr::null_mut(),
 				0,
-				&mut desc_len
+				&raw mut desc_len
 			),
 			FALSE
 		);
@@ -1363,8 +1435,8 @@ fn can_get_file_security() {
 				path.as_ptr(),
 				OWNER_SECURITY_INFORMATION,
 				desc.as_mut_ptr() as PSECURITY_DESCRIPTOR,
-				desc.len() as u32,
-				&mut desc_len,
+				len_u32(desc.len()),
+				&raw mut desc_len,
 			),
 			TRUE
 		);
@@ -1373,7 +1445,7 @@ fn can_get_file_security() {
 			context.signal(),
 			HandlerSignal::GetFileSecurity(OWNER_SECURITY_INFORMATION, desc_len)
 		);
-		assert_eq!(desc, expected_desc);
+		assert_eq!(desc, expected_desc.as_bytes());
 	});
 }
 
@@ -1388,7 +1460,7 @@ fn can_get_file_security_overflow() {
 				OWNER_SECURITY_INFORMATION,
 				ptr::null_mut(),
 				0,
-				&mut ret_len,
+				&raw mut ret_len,
 			),
 			FALSE
 		);
@@ -1402,7 +1474,7 @@ fn can_set_file_security() {
 	with_test_drive(|context| unsafe {
 		let path = convert_str("Z:\\test_set_file_security");
 		let mut desc = create_test_descriptor();
-		let desc_ptr = desc.as_mut_ptr() as PSECURITY_DESCRIPTOR;
+		let desc_ptr = desc.as_mut_ptr();
 		assert_eq_win32!(
 			SetFileSecurityW(path.as_ptr(), OWNER_SECURITY_INFORMATION, desc_ptr),
 			TRUE
@@ -1411,7 +1483,7 @@ fn can_set_file_security() {
 		assert_eq!(
 			context.signal(),
 			HandlerSignal::SetFileSecurity(
-				desc.len() as u32,
+				len_u32(desc.len()),
 				OWNER_SECURITY_INFORMATION,
 				sid,
 				owner_defaulted
@@ -1428,23 +1500,23 @@ fn can_find_streams() {
 		let hf = FindFirstStreamW(
 			path.as_ptr(),
 			FindStreamInfoStandard,
-			&mut data as *mut _ as LPVOID,
+			&raw mut data as LPVOID,
 			0,
 		);
 		assert_ne_win32!(hf, INVALID_HANDLE_VALUE);
-		assert_eq!(data.StreamSize.QuadPart(), &42);
+		assert_eq!(data.StreamSize.QuadPart, 42);
 		assert_eq!(
 			U16CStr::from_slice_truncate(&data.cStreamName).unwrap(),
 			convert_str("::$DATA")
 		);
-		assert_eq_win32!(FindNextStreamW(hf, &mut data as *mut _ as LPVOID), FALSE);
+		assert_eq_win32!(FindNextStreamW(hf, &raw mut data as LPVOID), FALSE);
 		assert_eq!(GetLastError(), ERROR_HANDLE_EOF);
 		assert_eq_win32!(FindClose(hf), TRUE);
 	});
 }
 
 #[test]
-#[ignore]
+#[ignore = "requires waiting for Dokany's timeout path"]
 fn can_reset_timeout() {
 	with_test_drive(|_context| unsafe {
 		let path = convert_str("Z:\\test_reset_timeout");
@@ -1469,8 +1541,8 @@ fn can_open_requester_token() {
 		let hf = open_file("Z:\\test_open_requester_token");
 		assert_eq_win32!(CloseHandle(hf), TRUE);
 		if let HandlerSignal::OpenRequesterToken(info_buffer) = context.signal() {
-			let expected_info = &*(expected_info_buffer.as_ptr() as *const TOKEN_USER);
-			let info = &*(info_buffer.as_ptr() as *const TOKEN_USER);
+			let expected_info = &*expected_info_buffer.as_ptr::<TOKEN_USER>();
+			let info = &*info_buffer.as_ptr::<TOKEN_USER>();
 			assert_eq_win32!(EqualSid(info.User.Sid, expected_info.User.Sid), TRUE);
 			assert_eq!(info.User.Attributes, expected_info.User.Attributes);
 		} else {
@@ -1532,13 +1604,14 @@ fn supports_null_ptrs() {
 			),
 			TRUE
 		);
-	})
+	});
 }
 
 struct DirectoryChangeIterator {
 	hd: OwnedHandle,
-	buf: Pin<Vec<u8>>,
+	buf: AlignedBuffer,
 	offset: usize,
+	valid_len: usize,
 	// Simply reuse the safe handle type as events are closed by CloseHandle as well.
 	he: OwnedHandle,
 	overlapped: Pin<Box<OVERLAPPED>>,
@@ -1561,11 +1634,11 @@ impl DirectoryChangeIterator {
 			assert_ne_win32!(he, INVALID_HANDLE_VALUE);
 			let mut result = DirectoryChangeIterator {
 				hd: OwnedHandle::from_raw_handle(hd),
-				buf: Pin::new(vec![
-					0;
-					mem::size_of::<FILE_NOTIFY_INFORMATION>() + MAX_PATH
-				]),
+				buf: AlignedBuffer::zeroed(
+					mem::size_of::<FILE_NOTIFY_INFORMATION>() + MAX_PATH * mem::size_of::<u16>(),
+				),
 				offset: 0,
+				valid_len: 0,
 				he: OwnedHandle::from_raw_handle(he),
 				overlapped: Box::pin(mem::zeroed()),
 			};
@@ -1576,16 +1649,17 @@ impl DirectoryChangeIterator {
 
 	fn begin_read(&mut self) {
 		unsafe {
+			self.valid_len = 0;
 			*self.overlapped = mem::zeroed();
 			self.overlapped.hEvent = self.he.as_raw_handle();
 			let result = ReadDirectoryChangesW(
 				self.hd.as_raw_handle(),
-				self.buf.as_mut_ptr() as LPVOID,
-				self.buf.len() as u32,
+				self.buf.as_mut_ptr(),
+				len_u32(self.buf.len()),
 				FALSE,
 				FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_ATTRIBUTES,
 				ptr::null_mut(),
-				&mut *self.overlapped,
+				&raw mut *self.overlapped,
 				None,
 			);
 			if result == FALSE {
@@ -1605,29 +1679,57 @@ impl Iterator for DirectoryChangeIterator {
 				assert_eq_win32!(
 					GetOverlappedResult(
 						self.hd.as_raw_handle(),
-						&mut *self.overlapped,
-						&mut ret_len,
+						&raw mut *self.overlapped,
+						&raw mut ret_len,
 						TRUE,
 					),
 					TRUE
 				);
-				assert_eq!(self.overlapped.Internal, STATUS_SUCCESS as usize);
-				assert_eq!(self.overlapped.InternalHigh, ret_len as usize);
+				assert_eq!(self.overlapped.Internal, 0);
+				self.valid_len =
+					usize::try_from(ret_len).expect("a directory-change length fits in usize");
+				assert_eq!(self.overlapped.InternalHigh, self.valid_len);
+				assert!(self.valid_len <= self.buf.len());
 				assert_ne!(ret_len, 0);
 			}
-			let info = &*(self.buf.as_ptr().add(self.offset) as *const FILE_NOTIFY_INFORMATION);
+			let header_len = mem::offset_of!(FILE_NOTIFY_INFORMATION, FileName);
+			assert!(self.offset <= self.valid_len.saturating_sub(header_len));
+			let info = &*self
+				.buf
+				.as_ptr::<FILE_NOTIFY_INFORMATION>()
+				.byte_add(self.offset);
+			let name_bytes =
+				usize::try_from(info.FileNameLength).expect("a filename length fits in usize");
+			assert_eq!(name_bytes % mem::size_of::<u16>(), 0);
+			let entry_len = header_len
+				.checked_add(name_bytes)
+				.expect("directory-change entry length overflow");
+			assert!(
+				self.offset
+					.checked_add(entry_len)
+					.is_some_and(|end| end <= self.valid_len)
+			);
+			let name = U16CString::from_vec(
+				slice::from_raw_parts(info.FileName.as_ptr(), name_bytes / mem::size_of::<u16>())
+					.to_vec(),
+			)
+			.expect("directory-change names do not contain NUL");
+			let item = (info.Action, name);
 			self.offset = if info.NextEntryOffset == 0 {
 				0
 			} else {
-				self.offset + info.NextEntryOffset as usize
+				let next = usize::try_from(info.NextEntryOffset)
+					.expect("a directory-change offset fits in usize");
+				assert!(next >= entry_len);
+				self.offset
+					.checked_add(next)
+					.filter(|offset| *offset < self.valid_len)
+					.expect("directory-change offset outside the completed buffer")
 			};
 			if self.offset == 0 {
 				self.begin_read();
 			}
-			Some((
-				info.Action,
-				U16CStr::from_ptr_str(info.FileName.as_ptr()).to_owned(),
-			))
+			Some(item)
 		}
 	}
 }
@@ -1645,8 +1747,9 @@ fn can_notify() {
 			}
 		});
 		assert_eq!(rx.recv().unwrap(), None);
+		let instance = context.instance();
 		assert!(notify_create(
-			context.instance(),
+			&instance,
 			convert_str("Z:\\test_notify_create"),
 			false
 		));
@@ -1655,7 +1758,7 @@ fn can_notify() {
 			Some((FILE_ACTION_ADDED, convert_str("test_notify_create")))
 		);
 		assert!(notify_delete(
-			context.instance(),
+			&instance,
 			convert_str("Z:\\test_notify_delete"),
 			false
 		));
@@ -1664,7 +1767,7 @@ fn can_notify() {
 			Some((FILE_ACTION_REMOVED, convert_str("test_notify_delete")))
 		);
 		assert!(notify_update(
-			context.instance(),
+			&instance,
 			convert_str("Z:\\test_notify_update")
 		));
 		assert_eq!(
@@ -1672,7 +1775,7 @@ fn can_notify() {
 			Some((FILE_ACTION_MODIFIED, convert_str("test_notify_update")))
 		);
 		assert!(notify_xattr_update(
-			context.instance(),
+			&instance,
 			convert_str("Z:\\test_notify_xattr_update")
 		));
 		assert_eq!(
@@ -1683,7 +1786,7 @@ fn can_notify() {
 			))
 		);
 		assert!(notify_rename(
-			context.instance(),
+			&instance,
 			convert_str("Z:\\test_notify_rename_old"),
 			convert_str("Z:\\test_notify_rename_new"),
 			false,
@@ -1704,5 +1807,47 @@ fn can_notify() {
 			))
 		);
 		handle.join().unwrap();
-	})
+	});
+}
+
+#[test]
+fn can_list_mount_points_for_mounted_filesystem() {
+	with_test_drive(|_| unsafe {
+		let mount_points = list_mount_points(false).unwrap();
+		let list: Vec<_> = mount_points.into_iter().collect();
+		assert_eq!(list.len(), 1);
+
+		let info = &list[0];
+		assert_eq!(info.device_type, DeviceType::Disk);
+		assert_eq!(
+			info.mount_point,
+			Some(convert_str("\\DosDevices\\Z:").as_ref())
+		);
+		assert_eq!(info.unc_name, None);
+		assert!(
+			regex::Regex::new(r"^\\Device\\Volume\{[0-9a-z]{8}-([0-9a-z]{4}-){3}[0-9a-z]{12}\}$")
+				.unwrap()
+				.is_match(&info.device_name.to_string_lossy())
+		);
+
+		let mut session_id = 0;
+		assert_eq!(
+			ProcessIdToSessionId(process::id(), &raw mut session_id),
+			TRUE
+		);
+		assert_eq!(info.session_id, session_id);
+	});
+}
+
+#[test]
+fn invalid_mount_point_fails() {
+	let (tx, _rx) = mpsc::sync_channel(1);
+	let result = FileSystemMounter::new(
+		TestHandler::new(tx),
+		convert_str("0"),
+		MountOptions::default(),
+	)
+	.mount();
+
+	assert!(matches!(result, Err(FileSystemMountError::Mount)));
 }

@@ -1,0 +1,38 @@
+[package]
+name = "dokan-fuzz"
+version.workspace = true
+authors.workspace = true
+description = "Fuzz and property-test harnesses for dokan"
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+dokan.workspace = true
+libfuzzer-sys.workspace = true
+widestring.workspace = true
+
+[dev-dependencies]
+bolero.workspace = true
+
+[[bin]]
+name = "api_inputs"
+path = "fuzz_targets/api_inputs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "name_expression"
+path = "fuzz_targets/name_expression.rs"
+test = false
+doc = false
+bench = false
+
+[lints]
+workspace = true

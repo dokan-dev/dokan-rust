@@ -1,0 +1,16 @@
+[package]
+name = "generate-dokan-bindings"
+version.workspace = true
+authors.workspace = true
+description = "Maintainer tool for regenerating dokan-sys bindings"
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+bindgen.workspace = true
+
+[lints]
+workspace = true

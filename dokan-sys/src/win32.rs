@@ -1,15 +1,7 @@
-use winapi::shared::{
-	minwindef::MAX_PATH,
-	ntdef::{LARGE_INTEGER, WCHAR},
-};
-
-#[repr(C)]
-pub struct WIN32_FIND_STREAM_DATA {
-	pub StreamSize: LARGE_INTEGER,
-	pub cStreamName: [WCHAR; MAX_PATH + 36],
-}
-
-pub type PWIN32_FIND_STREAM_DATA = *mut WIN32_FIND_STREAM_DATA;
+pub use crate::PWIN32_FIND_STREAM_DATA;
+pub type BY_HANDLE_FILE_INFORMATION = crate::_BY_HANDLE_FILE_INFORMATION;
+pub type WIN32_FIND_DATAW = crate::_WIN32_FIND_DATAW;
+pub type WIN32_FIND_STREAM_DATA = crate::_WIN32_FIND_STREAM_DATA;
 
 // from ntifs.h
 pub const FILE_DEVICE_DISK_FILE_SYSTEM: u32 = 0x00000008;

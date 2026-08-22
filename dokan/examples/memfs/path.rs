@@ -1,8 +1,10 @@
 use std::{borrow::Borrow, sync::Arc};
 
-use dokan::OperationResult;
+use dokan::{
+	OperationResult,
+	status::{STATUS_ACCESS_DENIED, STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_PATH_NOT_FOUND},
+};
 use widestring::{U16CStr, U16Str, U16String};
-use winapi::shared::ntstatus::*;
 
 use crate::{DirEntry, Entry, EntryName, EntryNameRef};
 
@@ -100,7 +102,7 @@ impl<'a> FullName<'a> {
 }
 
 fn find_dir_entry(cur_entry: &Arc<DirEntry>, path: &[&U16Str]) -> OperationResult<Arc<DirEntry>> {
-	if let Some(name) = path.get(0) {
+	if let Some(name) = path.first() {
 		if name.len() > MAX_COMPONENT_LENGTH as usize {
 			return Err(STATUS_OBJECT_NAME_INVALID);
 		}
@@ -126,7 +128,7 @@ pub fn split_path<'a>(
 		.as_slice()
 		.split(|x| *x == '\\' as u16)
 		.filter(|s| !s.is_empty())
-		.map(|s| U16Str::from_slice(s))
+		.map(U16Str::from_slice)
 		.collect::<Vec<_>>();
 	if path.is_empty() {
 		Ok(None)

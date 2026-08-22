@@ -1,17 +1,40 @@
-use dokan_sys::DOKAN_IO_SECURITY_CONTEXT;
-use widestring::U16CStr;
-use winapi::{
-	shared::{ntdef::NTSTATUS, ntstatus::STATUS_NOT_IMPLEMENTED},
-	um::winnt::{ACCESS_MASK, PSECURITY_DESCRIPTOR},
-};
-
 use crate::data::{
-	CreateFileInfo, DiskSpaceInfo, FileInfo, FileTimeOperation, FillDataResult, FindData,
-	FindStreamData, OperationInfo, VolumeInfo,
+	CreateFileInfo, DirectoryFiller, DiskSpaceInfo, FileInfo, FileTimeOperation, OperationInfo,
+	StreamFiller, VolumeInfo,
 };
+use crate::{
+	AccessRights, CreateDisposition, CreateOptions, FileAttributes, NtStatus, SecurityContext,
+	SecurityInformation, ShareAccess, status::NOT_IMPLEMENTED as STATUS_NOT_IMPLEMENTED,
+};
+use widestring::U16CStr;
 
 /// Returned by [`FileSystemHandler`]'s methods.
-pub type OperationResult<T> = Result<T, NTSTATUS>;
+pub type OperationResult<T> = Result<T, NtStatus>;
+
+/// Parameters for one create/open request.
+///
+/// Grouping these values prevents positional-argument mistakes and gives the
+/// high-level API typed flags while preserving unknown bits from newer Windows
+/// versions.
+#[derive(Debug)]
+pub struct CreateFileRequest<'a, FSH: FileSystemHandler> {
+	/// Path being created or opened.
+	pub path: &'a U16CStr,
+	/// Security information supplied by the Windows I/O manager.
+	pub security: SecurityContext<'a>,
+	/// Access rights requested by the caller.
+	pub desired_access: AccessRights,
+	/// File attributes requested for a newly created object.
+	pub file_attributes: FileAttributes,
+	/// Sharing modes requested by the caller.
+	pub share_access: ShareAccess,
+	/// Action to take based on whether the object already exists.
+	pub disposition: CreateDisposition,
+	/// Kernel create/open options.
+	pub options: CreateOptions,
+	/// Metadata and per-handle context for this Dokany operation.
+	pub operation: &'a OperationInfo<'a, FSH>,
+}
 
 /// Handles operations for a mounted file system.
 ///
@@ -25,38 +48,43 @@ pub type OperationResult<T> = Result<T, NTSTATUS>;
 /// implementation of some important callbacks such as [`create_file`] will make the file system
 /// unusable.
 ///
-/// `Err` type is [`NTSTATUS`]. Use [`map_win32_error_to_ntstatus`] to convert from Win32 errors
+/// The error type is [`NtStatus`]. Use [`map_win32_error_to_ntstatus`] to convert from Win32 errors
 /// (e.g. returned by [`GetLastError`]).
+///
+/// # Errors
+///
+/// Each callback returning [`OperationResult`] should return the [`NtStatus`]
+/// that Dokany must report for that operation. The default implementations
+/// return [`status::NOT_IMPLEMENTED`](crate::status::NOT_IMPLEMENTED).
 ///
 /// [`cleanup`]: Self::cleanup
 /// [`close_file`]: Self::close_file
 /// [`create_file`]: Self::create_file
 /// [`map_win32_error_to_ntstatus`]: crate::map_win32_error_to_ntstatus
-/// [`GetLastError`]: winapi::um::errhandlingapi::GetLastError
-#[allow(unused_variables)]
-pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
-	/// Type of the context associated with an open file object.
-	type Context: Sync + 'c;
+/// [`GetLastError`]: https://learn.microsoft.com/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
+#[allow(
+	unused_variables,
+	clippy::missing_errors_doc,
+	reason = "the shared callback error contract is documented on the trait"
+)]
+pub trait FileSystemHandler: Send + Sync + Sized + 'static {
+	/// State associated with one open file handle.
+	///
+	/// Dokany may execute operations—and the final close—on different worker
+	/// threads, so handle state must be safe to transfer and share.
+	type Context: Send + Sync + 'static;
 
 	/// Called when a file object is created.
 	///
-	/// The flags p-them to flags accepted by [`CreateFile`] using the
+	/// The flags can be mapped to values accepted by [`CreateFile`] using the
 	/// [`map_kernel_to_user_create_file_flags`] helper function.
 	///
 	/// [`ZwCreateFile`]: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-zwcreatefile
 	/// [`CreateFile`]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew
 	/// [`map_kernel_to_user_create_file_flags`]: crate::map_kernel_to_user_create_file_flags
-	#[allow(clippy::too_many_arguments)]
 	fn create_file(
-		&'h self,
-		file_name: &U16CStr,
-		security_context: &DOKAN_IO_SECURITY_CONTEXT,
-		desired_access: ACCESS_MASK,
-		file_attributes: u32,
-		share_access: u32,
-		create_disposition: u32,
-		create_options: u32,
-		info: &mut OperationInfo<'c, 'h, Self>,
+		&self,
+		request: &CreateFileRequest<'_, Self>,
 	) -> OperationResult<CreateFileInfo<Self::Context>> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
@@ -78,10 +106,10 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	/// [`close_file`]: Self::close_file
 	/// [`create_file`]: Self::create_file
 	fn cleanup(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) {
 	}
 
@@ -96,10 +124,10 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	/// [`context`]: Self::Context
 	/// [`create_file`]: Self::create_file
 	fn close_file(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) {
 	}
 
@@ -111,12 +139,12 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	///
 	/// [`ReadFile`]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-readfile
 	fn read_file(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
-		offset: i64,
+		offset: u64,
 		buffer: &mut [u8],
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<u32> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
@@ -133,12 +161,12 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	/// [`info.write_to_eof`]: OperationInfo::write_to_eof
 	/// [`WriteFile`]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-writefile
 	fn write_file(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
 		offset: i64,
 		buffer: &[u8],
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<u32> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
@@ -149,10 +177,10 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	///
 	/// [`FlushFileBuffers`]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers
 	fn flush_file_buffers(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
@@ -163,17 +191,19 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	///
 	/// [`GetFileInformationByHandle`]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
 	fn get_file_information(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<FileInfo> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
 
 	/// Lists all child items in the directory.
 	///
-	/// `fill_find_data` should be called for every child item in the directory.
+	/// Submit each child item through `filler`. Enumeration should stop when the
+	/// filler reports that Dokany's output buffer is full; [`DirectoryFiller::fill`]
+	/// handles that flow automatically.
 	///
 	/// It will only be called if [`find_files_with_pattern`] returns [`STATUS_NOT_IMPLEMENTED`].
 	///
@@ -182,18 +212,19 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	/// [`find_files_with_pattern`]: Self::find_files_with_pattern
 	/// [`FindFirstFile`]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirstfilew
 	fn find_files(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
-		fill_find_data: impl FnMut(&FindData) -> FillDataResult,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		filler: &mut DirectoryFiller<'_>,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
 
 	/// Lists all child items that matches the specified `pattern` in the directory.
 	///
-	/// `fill_find_data` should be called for every matching child item in the directory.
+	/// Submit each matching child item through `filler`. Enumeration should stop
+	/// when the filler reports that Dokany's output buffer is full.
 	///
 	/// [`is_name_in_expression`] can be used to determine if a file name matches the pattern.
 	///
@@ -206,12 +237,12 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	/// [`find_files`]: Self::find_files
 	/// [`FindFirstFile`]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirstfilew
 	fn find_files_with_pattern(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
 		pattern: &U16CStr,
-		fill_find_data: impl FnMut(&FindData) -> FillDataResult,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		filler: &mut DirectoryFiller<'_>,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
@@ -226,11 +257,11 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	/// [file attribute constants]: https://docs.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
 	/// [`SetFileAttributes`]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileattributesw
 	fn set_file_attributes(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
-		file_attributes: u32,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		file_attributes: FileAttributes,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
@@ -241,13 +272,13 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	///
 	/// [`SetFileTime`]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfiletime
 	fn set_file_time(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
 		creation_time: FileTimeOperation,
 		last_access_time: FileTimeOperation,
 		last_write_time: FileTimeOperation,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
@@ -262,10 +293,10 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	///
 	/// [`info.delete_pending`]: OperationInfo::delete_pending
 	fn delete_file(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
@@ -282,10 +313,10 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	/// [`cleanup`]: Self::cleanup
 	/// [`info.delete_pending`]: OperationInfo::delete_pending
 	fn delete_directory(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
@@ -301,12 +332,12 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	///
 	/// [`MoveFileEx`]: https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw
 	fn move_file(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
 		new_file_name: &U16CStr,
 		replace_if_existing: bool,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
@@ -320,11 +351,11 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	///
 	/// [`FILE_END_OF_FILE_INFORMATION`]: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/ns-ntddk-_file_end_of_file_information
 	fn set_end_of_file(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
 		offset: i64,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
@@ -338,11 +369,11 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	///
 	/// [`FILE_ALLOCATION_INFORMATION`]: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_allocation_information
 	fn set_allocation_size(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
 		alloc_size: i64,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
@@ -357,12 +388,12 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	/// [`MountFlags::FILELOCK_USER_MODE`]: crate::MountFlags::FILELOCK_USER_MODE
 	/// [`LockFile`]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfile
 	fn lock_file(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
 		offset: i64,
 		length: i64,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
@@ -377,12 +408,12 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	/// [`MountFlags::FILELOCK_USER_MODE`]: crate::MountFlags::FILELOCK_USER_MODE
 	/// [`UnlockFile`]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-unlockfile
 	fn unlock_file(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
 		offset: i64,
 		length: i64,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
@@ -393,8 +424,8 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	///
 	/// [`GetDiskFreeSpaceEx`]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getdiskfreespaceexw
 	fn get_disk_free_space(
-		&'h self,
-		info: &OperationInfo<'c, 'h, Self>,
+		&self,
+		info: &OperationInfo<'_, Self>,
 	) -> OperationResult<DiskSpaceInfo> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
@@ -405,23 +436,23 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	///
 	/// [`GetVolumeInformation`]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumeinformationbyhandlew
 	fn get_volume_information(
-		&'h self,
-		info: &OperationInfo<'c, 'h, Self>,
-	) -> OperationResult<VolumeInfo> {
+		&self,
+		info: &OperationInfo<'_, Self>,
+	) -> OperationResult<VolumeInfo<'_>> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
 
 	/// Called when Dokan has successfully mounted the volume.
 	fn mounted(
-		&'h self,
+		&self,
 		mount_point: &U16CStr,
-		info: &OperationInfo<'c, 'h, Self>,
+		info: &OperationInfo<'_, Self>,
 	) -> OperationResult<()> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
 
 	/// Called when Dokan is unmounting the volume.
-	fn unmounted(&'h self, info: &OperationInfo<'c, 'h, Self>) -> OperationResult<()> {
+	fn unmounted(&self, info: &OperationInfo<'_, Self>) -> OperationResult<()> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
 
@@ -433,17 +464,16 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	///
 	/// See [`GetFileSecurity`] for more information.
 	///
-	/// [`STATUS_BUFFER_OVERFLOW`]: winapi::shared::ntstatus::STATUS_BUFFER_OVERFLOW
+	/// [`STATUS_BUFFER_OVERFLOW`]: crate::status::BUFFER_OVERFLOW
 	/// [`GetFileSecurity`]: https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getfilesecuritya
 	fn get_file_security(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
-		security_information: u32,
-		security_descriptor: PSECURITY_DESCRIPTOR,
-		buffer_length: u32,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
-	) -> OperationResult<u32> {
+		security_information: SecurityInformation,
+		security_descriptor: &mut [u8],
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
+	) -> OperationResult<usize> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
 
@@ -453,31 +483,31 @@ pub trait FileSystemHandler<'c, 'h: 'c>: Sync + Sized + 'h {
 	///
 	/// [`SetFileSecurity`]: https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setfilesecuritya
 	fn set_file_security(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
-		security_information: u32,
-		security_descriptor: PSECURITY_DESCRIPTOR,
-		buffer_length: u32,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		security_information: SecurityInformation,
+		security_descriptor: &[u8],
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
 
 	/// Lists all alternative streams of the file.
 	///
-	/// `fill_find_stream_data` should be called for every stream of the file, including the default
-	/// data stream `::$DATA`.
+	/// Submit every stream through `filler`, including the default data stream
+	/// `::$DATA`. Enumeration should stop when the filler reports that Dokany's
+	/// output buffer is full.
 	///
 	/// See [`FindFirstStream`] for more information.
 	///
 	/// [`FindFirstStream`]: https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirststreamw
 	fn find_streams(
-		&'h self,
+		&self,
 		file_name: &U16CStr,
-		fill_find_stream_data: impl FnMut(&FindStreamData) -> FillDataResult,
-		info: &OperationInfo<'c, 'h, Self>,
-		context: &'c Self::Context,
+		filler: &mut StreamFiller<'_>,
+		info: &OperationInfo<'_, Self>,
+		context: &Self::Context,
 	) -> OperationResult<()> {
 		Err(STATUS_NOT_IMPLEMENTED)
 	}
